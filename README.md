@@ -100,7 +100,7 @@ The analysis pipeline is organized into sequential modules:
 
 ### 05_DEG
 - Differential gene expression analysis (RNA-seq)  
-- Conducted by collaborator
+
 
 ---
 
