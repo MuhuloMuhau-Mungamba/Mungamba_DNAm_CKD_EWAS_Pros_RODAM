@@ -39,14 +39,105 @@ Results: At baseline, significant differentially methylated positions (DMPs) wer
 
 Conclusion: We identified epigenetic changes linked to CKD development in an African population. These methylation signals, supported by gene expression patterns, highlight immune and kidney-related pathways associated with CKD risk and progression. Our findings provide a first foundation for future studies investigating the potential of epigenetic markers in CKD risk stratification and prevention in African populations.
 
-Study cohort
+## Study Cohort
 
-RODAM-Pros: Ghanaian migrants and non-migrants (rural Ghana, urban Ghana, Amsterdam)
+RODAM-Prospective cohort: Ghanaian migrants and non-migrants  
+- Rural Ghana  
+- Urban Ghana  
+- Amsterdam (The Netherlands)  
 
-Software Environment
+---
+
+## Software Environment
+
 All analyses were performed in the R statistical computing environment.
 
-Key R packages include:
-minfi, limma, bacon, missMethyl, clusterProfiler, dmrff, bumphunter, enrichR, car, ggplot2, dplyr.
+Key R packages include:  
+`minfi`, `limma`, `bacon`, `missMethyl`, `clusterProfiler`, `bumphunter`, `enrichR`, `ggplot2`, `dplyr`
 
-Repository Structure
+---
+
+## Repository Structure
+
+The analysis pipeline is organized into sequential modules:
+
+### 01_Preprocessing
+- DNA methylation normalization (Funnorm)
+- Probe filtering (sex chromosomes, cross-hybridization, SNPs)
+- Generation of beta and M-values
+
+---
+
+### 02_EWAS
+- Differentially methylated positions (DMPs)
+- Outcomes:
+  - Incident CKD
+  - ΔeGFR
+  - ΔACR
+- Includes:
+  - QQ plots
+  - Manhattan plots
+  - Volcano plots
+
+---
+
+### 03_DMR
+- Differentially methylated regions (DMRs)
+- Identified using `bumphunter`
+- Multiple cutoffs explored
+- Annotated to nearest genes
+
+---
+
+### 04_Enrichment
+- Functional annotation of EWAS signals:
+  - Gene Ontology (GO)
+  - KEGG pathways
+  - Transcription factor enrichment
+  - Regulatory enrichment (eFORGE)
+
+---
+
+### 05_DEG
+- Differential gene expression analysis (RNA-seq)  
+- Conducted by collaborator
+
+---
+
+### 06_eQTM
+- Integration of DNA methylation and gene expression  
+- Identification of methylation–expression relationships  
+
+---
+
+### 07_Sensitivity_analysis
+- EWAS repeated with additional adjustment for:
+  - Hypertension
+  - Diabetes
+- Includes:
+  - DMP analyses
+  - QQ, Manhattan, Volcano plots
+  - CpG-level violin plots
+
+---
+
+### 08_Additional_analyses
+- Supplementary and reviewer-requested analyses:
+  - Correlation analyses
+  - Power calculations
+  - Post hoc robustness checks
+
+---
+
+## Reproducibility Notes
+
+- File paths in scripts are generalized for data security  
+- Users must define local paths for:
+  - Methylation data
+  - Phenotype data  
+- Scripts assume Illumina EPIC array annotation (hg19)
+
+---
+
+## End of Document
+############################################
