@@ -146,7 +146,9 @@ Oxidative stress response
 Genomic regions associated with:
 Open chromatin (DNase I hypersensitive sites)
 Epithelial and stromal cell types
+
 Notes
+
 clusterProfiler results are exploratory and gene-based
 missMethyl results account for probe-number bias and are prioritized for interpretation
 Transcription factor enrichment provides regulatory context
