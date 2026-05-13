@@ -2,7 +2,7 @@
 # CKD EWAS – Functional Enrichment
 # Analysis: GO and KEGG enrichment (clusterProfiler)
 #
-# Author: Muhulo Muhau Mungamba
+# Author: Muhulo Muhau Mungamba & Andrea Venema
 # Date: 2026-04-16
 #
 # Description:
