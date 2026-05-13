@@ -1,7 +1,7 @@
 ############################################
 # CKD EWAS – Transcription Factor Enrichment
 #
-# Author: Muhulo Muhau Mungamba
+# Author: Muhulo Muhau Mungamba & Andrea Venema
 # Date: 2026-04-16
 ############################################
 
