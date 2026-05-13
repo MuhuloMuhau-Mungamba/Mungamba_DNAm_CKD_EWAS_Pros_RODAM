@@ -1,0 +1,847 @@
+# Gene Expression Analysis Pipeline
+This RMarkdown file combines raw data processing, quality control, exploratory data analysis, and differential expression analysis.
+
+---
+
+## 1. Raw Data Processing and Quality Control
+
+---
+title: "gex_QC"
+output: html_document
+date: "2025-01-27"
+Author: Your Name Here
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+Key QC Metrics to Check:
+1. Read Depth (Coverage): The total number of reads mapped to the genome, often referred to as sequencing depth.
+2. Sequence Quality Scores: Measure of the accuracy of each base in the sequencing reads (e.g., Phred scores).
+3. Alignment Rates: The percentage of reads that align to the reference genome.
+4. GC Content: The proportion of G and C nucleotides in the reads, which can affect the alignment.
+5. Distribution of Read Counts across Samples: For RNA-seq, you may want to look at the distribution of counts per gene to ensure no samples have excessively low counts.
+
+##############################################
+
+
+```{r Necessary libraries}
+library(readr)
+library(dplyr)
+library(ggplot2)
+
+```
+
+
+```{r Read raw transcript-level count matrix}
+# Calculate total read depth per sample - ./project_directory/GEX_Analysis/raw_process
+
+rna_data <- read.csv("./data/Complete_gene_count_matrix.csv", header = TRUE, row.names = 2)
+rna_data[,1] <- NULL
+
+# Check the first few rows of the data to ensure proper loading
+head(rna_data)
+# Remove the "_L004" part from the sample names (but keep the sample)
+colnames(rna_data) <- gsub("_L004", "", colnames(rna_data))
+
+
+# Remove non-numeric columns (if they exist, such as gene_id or any metadata columns)
+rna_data_numeric <- rna_data[, sapply(rna_data, is.numeric)]
+
+# Now calculate total reads per sample (sum of TPM values across all genes for each sample)
+total_reads_per_sample <- colSums(rna_data_numeric)
+
+# Check the result (top 10 samples)
+head(total_reads_per_sample, 10)
+
+barplot(total_reads_per_sample, main="Total Reads per Sample", col="skyblue", las=2, 
+        ylab="Total Reads (TPM)", xlab="Samples", cex.names=0.7)
+
+```
+
+
+```{r Read raw transcript-level count matrix}
+
+# Create a data frame with the total reads and sample names
+df_reads <- data.frame(Sample = names(total_reads_per_sample), Reads = total_reads_per_sample)
+
+# Sort the data in descending order by total reads
+df_reads <- df_reads[order(df_reads$Reads, decreasing = TRUE),]
+
+# Remove the "_L004" part from the sample names (but keep the sample)
+df_reads$Sample <- gsub("_L004", "", df_reads$Sample)
+
+# Make sure 'Sample' is a factor with levels ordered by 'Reads'
+df_reads$Sample <- factor(df_reads$Sample, levels = df_reads$Sample)
+
+# Specify which samples to label and add arrows
+#samples_to_label <- c("G2155","P0874")
+samples_to_label <- c()
+
+# Create the barplot
+n_reads = ggplot(df_reads, aes(x = Sample, y = Reads, fill = Sample)) +
+  geom_bar(stat = "identity", color = "black", show.legend = FALSE, width = 0.7) +  # Increase bar width
+  coord_flip() +  # Flip coordinates to make labels horizontal and readable
+  labs(title = "Total Reads Per Sample",
+       x = "Sample", 
+       y = "Total Reads") +
+  theme_minimal(base_size = 14) +  # Minimalistic theme with larger base font
+  theme(
+    axis.title = element_text(face = "bold", size = 14),
+    axis.text = element_text(size = 12),  # Adjust font size of axis labels
+    plot.title = element_text(face = "bold", size = 16),  # Bold and larger title
+    plot.subtitle = element_text(size = 14),
+    axis.text.x = element_text(angle = 0, hjust = 1),  # Horizontal labels for x-axis
+    axis.text.y = element_text(size = 5),  # Smaller font size for y-axis labels to reduce clutter
+    panel.grid.major = element_blank(),  # Remove major grid lines for cleaner look
+    panel.grid.minor = element_blank(),  # Remove minor grid lines for cleaner look
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),  # Add border around plot
+    strip.text = element_text(size = 10)  # Adjust strip text for facet labels (if used)
+  ) +
+  # Add labels only for the samples of interest and adjust label position for readability
+  geom_text(data = df_reads[df_reads$Sample %in% samples_to_label, ], 
+            aes(x = Sample, y = Reads, label = Sample), 
+            hjust = -0.5, color = "black", size = 4, check_overlap = TRUE) +
+  # Add arrows pointing to the labels for the selected samples
+  geom_segment(data = df_reads[df_reads$Sample %in% samples_to_label, ], 
+               aes(x = Sample, xend = Sample, y = Reads, yend = Reads + 500000), 
+               arrow = arrow(type = "closed", length = unit(0.1, "inches")), 
+               color = "black", size = 0.8)  # Customize arrow size and appearance
+
+
+ggsave("./raw_process/NumberofReads_persample.png", n_reads, width = 10, height = 15, dpi = 600)
+
+write.csv(df_reads, "./raw_process/NumberofReads_PerSample.csv")
+          
+```
+
+ 2 : Look at the distribution of counts for genes across samples. 
+
+Extreme low or high counts in certain genes may indicate problems like contamination or biased sequencing.
+Example : Gene Detection: A few samples detect fewer than 500 genes (check sample processing or library prep).
+
+```{r distribution of counts for genes}
+
+# Calculate the number of genes detected in each sample
+num_genes_detected <- colSums(rna_data > 0)
+
+names(num_genes_detected) <- gsub("_L004", "", names(num_genes_detected))
+
+# Convert the result to a data frame for easier plotting
+num_genes_data <- data.frame(
+  Sample = names(num_genes_detected),       # Sample names as a column
+  GenesDetected = num_genes_detected        # Number of detected genes in each sample
+)
+
+# List of samples to highlight
+highlight_samples <- c("G2155","P0874")
+
+# Remove "_L004" from the sample names (if applicable)
+num_genes_data$Sample <- gsub("_L004", "", num_genes_data$Sample)
+
+# Sort the data by GenesDetected in descending order (use ascending = TRUE for ascending order)
+num_genes_data <- num_genes_data %>%
+  arrange(desc(GenesDetected))
+
+# Convert the 'Sample' column to a factor so the bars will be sorted
+num_genes_data$Sample <- factor(num_genes_data$Sample, levels = num_genes_data$Sample)
+
+# List of samples to highlight
+highlight_samples <- c("G2155","P0874")
+
+# Create the bar plot
+n_genes = ggplot(num_genes_data, aes(x = Sample, y = GenesDetected)) +
+  geom_bar(stat = "identity", fill = "steelblue", color = "black", alpha = 0.7) +  # Bar plot for the number of genes detected
+  labs(
+    title = "Number of Detected Genes per Sample",  # Plot title
+    x = "Sample",                                  # X-axis label
+    y = "Number of Detected Genes"                 # Y-axis label
+  ) +
+  theme_minimal() +  # Clean minimal theme
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),  # Rotate X-axis labels for better readability
+    axis.title = element_text(size = 14),               # Adjust size of axis titles
+    axis.text = element_text(size = 8),                # Adjust size of axis labels
+    plot.title = element_text(size = 16, face = "bold"), # Adjust title size
+    plot.subtitle = element_text(size = 14)             # Adjust subtitle size
+  ) +
+  # Add arrows and labels for specific samples
+  geom_text(data = num_genes_data[num_genes_data$Sample %in% highlight_samples, ],
+            aes(x = Sample, y = GenesDetected + 1000, label = Sample), 
+            color = "red", size = 3, fontface = "bold", hjust = -0.1,angle = 90) +  # Adjust position of labels
+  geom_segment(data = num_genes_data[num_genes_data$Sample %in% highlight_samples, ],
+               aes(x = Sample, xend = Sample, y = GenesDetected, yend = GenesDetected + 1000),
+               arrow = arrow(type = "closed", length = unit(0.2, "inches")),
+               color = "grey", size = 0.5)
+
+ggsave("./raw_process/NumberofGenes_persample.png", n_genes, width = 30, height = 12, dpi = 600)
+
+write.csv(num_genes_data, "./raw_process/NumberofGenesDectected_PerSample.csv")
+
+```
+
+## 3. # Sequence Quality Scores : Measure of the accuracy of each base in the sequencing reads (e.g., Phred scores).
+
+You can assess the quality of the individual bases in the sequencing reads using FastQC or Qualimap (for visualizations). In R, you can also use the ShortRead package to look at base quality scores.
+
+FastQC (command-line tool): Run FastQC on your raw fastq files to generate detailed quality reports. Key metrics to review:
+  Per-base sequence quality: Look for bases with low Phred scores.
+Per-sequence GC content: Check if the GC content is consistent across samples.
+
+This is also mentioned as %Q30, in the data file - can be directly plotted from here - %values. 
+example snippet here : 
+
+```{r distribution of counts for genes}
+
+
+install.packages("ShortRead")  # For reading FASTQ files
+library(ShortRead)
+
+# Function to extract Phred scores from a FASTQ file
+extract_phred_scores <- function(fastq_file) {
+  # Read the FASTQ file
+  fq <- readFastq(fastq_file)
+  
+  # Extract quality scores
+  quality_scores <- quality(fq)
+  
+  # Convert Phred scores (encoded in ASCII) to numeric scores
+  phred_scores <- as.numeric(quality_scores) - 33  # Convert ASCII to Phred (Sanger format)
+  
+  return(phred_scores)
+}
+
+# Function to plot the distribution of Phred scores
+plot_phred_scores <- function(phred_scores) {
+  # Convert Phred scores to a data frame
+  df <- data.frame(Phred = phred_scores)
+  
+  # Plot histogram of Phred scores
+  ggplot(df, aes(x = Phred)) +
+    geom_histogram(binwidth = 1, fill = "blue", color = "black", alpha = 0.7) +
+    labs(title = "Distribution of Phred Scores", x = "Phred Score", y = "Frequency") +
+    theme_minimal()
+}
+
+# Example of processing a single FASTQ file
+fastq_file <- "your_sample.fastq"  # Replace with your file path
+phred_scores <- extract_phred_scores(fastq_file)
+
+# Plot the distribution of Phred scores
+plot_phred_scores(phred_scores)
+
+```
+
+
+
+
+---
+
+## 2. Exploratory Data Analysis
+
+---
+title: "RNAseq_Datafiltering"
+author: "Manasa"
+date: "2025-02-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+Filtering Raw data counts , There were 20,328 gene_ids in raw count matrix _ 20328*183
+
+Step 1 Genes which were lower than 10 counts across all samples are removed. 
+        dim(filtered_count_matrix) _ 17,899*183
+        
+Step 2 There were no nonßyero genes that were expressed onlz in controls but not in cases or vice versa in filteredßcount_matrix
+
+Step 3 Report on zero_counts for all geneids across all samples is created
+
+Step 4 Remove genes that have yer_counts in > 138 samples (75% samples) ß 16063*183
+
+Step 5 Sanitz check * Above steps took care of low variance genes threshold>0.2 already.
+
+
+```{r cars}
+library(readr)
+library(dplyr)
+library(ggplot2)
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+
+## Read dataframe of count_matrix 
+# count_matrix = read.csv("./GEX_Analysis/raw_process/Complete_gene_count_matrix.csv", header = TRUE, row.names = 2)
+
+count_matrix = read.csv("/project/RNAseq/raw(fastq)_process/Counts/Complete_gene_count_matrix.csv", header = TRUE, row.names = 2)
+count_matrix[,1] <- NULL
+
+colnames(count_matrix) <- gsub("_L004", "", colnames(count_matrix))
+count_matrix <- count_matrix[, !colnames(count_matrix) %in% c("G2155", "P0874")] 
+#removing 2 low qc samples 
+# Samples that do not have methylation files
+
+rownames(count_matrix) <- sub("\\..*", "", rownames(count_matrix))
+
+#count_matrix <-count_matrix %>% remove_rownames %>% column_to_rownames(var="gene_id") 
+
+print(dim(count_matrix))
+
+```
+Pre_filter data for low counts 
+
+```{r remove low count genes across all samples, echo=FALSE}
+# Filter out genes with low total counts across all samples
+
+gene_sum <- rowSums(count_matrix)
+filtered_count_matrix <- count_matrix[gene_sum > 10, ]  # e.g., only keep genes with total counts > 10
+print(dim(filtered_count_matrix))  # Check the new dimensions of the data
+
+```
+
+```{r Report on genes with 0 expression across samples , echo=FALSE}
+
+# Assuming 'filtered_count_matrix' is your filtered gene expression data with genes as rows and samples as columns
+# and the row names of 'filtered_count_matrix' represent gene_ids
+
+# Step 1: Initialize an empty matrix to store the number of zeros
+zero_count_matrix <- matrix(0, nrow = nrow(filtered_count_matrix), ncol = ncol(filtered_count_matrix))
+rownames(zero_count_matrix) <- rownames(filtered_count_matrix)
+colnames(zero_count_matrix) <- colnames(filtered_count_matrix)
+
+# Step 2: Loop through each gene and count the number of zeros for each sample
+for (i in 1:nrow(filtered_count_matrix)) {
+  for (j in 1:ncol(filtered_count_matrix)) {
+    if (filtered_count_matrix[i, j] == 0) {
+      zero_count_matrix[i, j] <- 1
+    }
+  }
+}
+
+# Step 3: Sum the number of zeros for each gene across all samples
+zero_count_summary <- rowSums(zero_count_matrix)
+
+# Step 4: Create the final data frame
+zero_count_df <- data.frame(gene_id = rownames(filtered_count_matrix), zero_count = zero_count_summary)
+
+# Print the result
+print(zero_count_df)
+
+write.csv(zero_count_df, file = "/project/RNAseq/output/zero_count_output.csv", row.names = FALSE)
+
+
+```
+
+
+
+```{r visualization of low count genes across all samples, echo=FALSE}
+
+
+# Assuming 'zero_count_df' contains the zero count data
+
+# Sort the data frame by zero count (highest to lowest)
+zero_count_df_sorted <- zero_count_df[order(-zero_count_df$zero_count), ]
+
+# Select top 2000 genes
+top_2000_genes <- zero_count_df_sorted[1:2000, ]
+
+# Create the barplot with vertical bars
+library(ggplot2)
+ggplot(top_2000_genes, aes(x = reorder(gene_id, -zero_count), y = zero_count)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_cartesian(clip = 'off') +  # Allow labels to be outside of the plot area if necessary
+  labs(title = "Top 2000 Genes with Highest Zero Expression Counts",
+       x = "Gene ID", y = "Number of Zero Expression Values") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, size = 6),  # Rotate x-axis labels for better readability
+        axis.text.y = element_text(size = 6),  # Adjust y-axis text size
+        plot.margin = margin(1, 1, 1, 5))  # Increase margin for better label space
+
+
+```
+
+```{r Read metainfo, include=FALSE}
+## Read dataframe of count_matrix 
+## Read dataframe of Pheno_file 
+all_meta = read_csv("/project/RNAseq/input/DEPhenofile_all.csv")
+
+# Check/remove duplicates if any
+meta_no_duplicates <- all_meta[!duplicated(all_meta$RodamID), ]
+meta_no_duplicates <- meta_no_duplicates %>% remove_rownames %>% column_to_rownames(var="R2_RNA_number") 
+meta_no_duplicates <- meta_no_duplicates[rownames(meta_no_duplicates) %in% colnames(count_matrix), ]
+
+
+```
+
+
+
+```{r to Identify Genes with Zero Counts in Cases/Controls:, echo=FALSE}
+
+# Filter out genes with low total counts across all samples
+# Step 1: Extract the list of case and control samples
+case_samples <- colnames(filtered_count_matrix)[meta_no_duplicates$R1R2_DeltaSBP_CaseControl == "Case"]
+control_samples <- colnames(filtered_count_matrix)[meta_no_duplicates$R1R2_DeltaSBP_CaseControl == "Control"]
+
+# Step 2: Create two logical matrices for non-zero expression in cases and controls
+non_zero_cases <- filtered_count_matrix[, case_samples] > 0
+non_zero_controls <- filtered_count_matrix[, control_samples] > 0
+
+# Step 3: Identify genes that have non-zero counts in cases but zero counts in controls, and vice versa
+genes_case_non_zero_control_zero <- rowSums(non_zero_cases) > 0 & rowSums(non_zero_controls) == 0
+genes_control_non_zero_case_zero <- rowSums(non_zero_controls) > 0 & rowSums(non_zero_cases) == 0
+
+# Step 4: Create data frames to store results for these genes
+genes_case_non_zero_control_zero_df <- rownames(filtered_count_matrix)[genes_case_non_zero_control_zero]
+genes_control_non_zero_case_zero_df <- rownames(filtered_count_matrix)[genes_control_non_zero_case_zero]
+
+# Step 5: Print the results or save them to files
+cat("Genes with non-zero counts in cases but not in controls:\n")
+print(genes_case_non_zero_control_zero_df)
+
+cat("Genes with non-zero counts in controls but not in cases:\n")
+print(genes_control_non_zero_case_zero_df)
+
+```
+
+To remove genes from filtered_count_matrix that have zero expression in more than 138 samples (75% of samples) according to zero_count_df
+ 
+```{r to Identify Genes with Zero Counts in Cases/Controls:, echo=FALSE}
+
+ # Assuming 'zero_count_df' contains the count of zeros for each gene
+# Step 1: Identify genes with more than 100 zeros
+genes_to_remove <- zero_count_df$gene_id[zero_count_df$zero_count > 138]
+
+# Step 2: Remove these genes from filtered_count_matrix
+filtered_2_count_matrix <- filtered_count_matrix[!rownames(filtered_count_matrix) %in% genes_to_remove, ]
+
+# Step 3: Print the new dimensions of the filtered matrix
+print(dim(filtered_2_count_matrix))
+
+```
+
+```{r }
+
+write.csv(filtered_2_count_matrix, "/project/RNAseq/output/filtered_gene_countmatrix.csv")
+
+```
+
+
+
+
+---
+
+## 3. Filtered Data & Differential Expression Analysis
+
+---
+title: "gex_filtered_DEanalysis.Rmd"
+author: "Manasa"
+date: "2025-02-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r Load required libraries, include=FALSE}
+# Load libraries
+library(tximport)
+library(edgeR)
+library(limma)
+library(DESeq2)
+
+library(pheatmap)
+library(ggplot2)
+#library(vsn)
+library(tidyverse)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r Read count matrix, include=FALSE}
+
+## Read dataframe of count_matrix 
+count_matrix = read.csv("/project/RNAseq/output/filtered_gene_countmatrix.csv", header = TRUE)
+
+rownames(count_matrix) = count_matrix$X
+count_matrix$X = NULL
+count_matrix <- count_matrix[, !colnames(count_matrix) %in% c("G2155", "P0874")]  #removing 2 low qc samples
+
+
+                                                                                  # Samples that do not have methylation files
+#count_matrix <-count_matrix %>% remove_rownames %>% column_to_rownames(var="gene_id") 
+
+print(dim(count_matrix))
+
+```
+
+Note: 
+Apart from 2 low QC samples: 
+These 3 R2_RNA numbers from Phenofile do not match the RNAseq filenames/count_matrix samplenames
+G2577
+P0095
+P0266
+#################
+
+Therefore, the original count_matrix 181 samples -> reduces to 179 samples in further downstream analysis 
+
+
+```{r Read metainfo, include=FALSE}
+## Read dataframe of count_matrix 
+## Read dataframe of Pheno_file 
+all_meta = read_csv("/project/RNAseq/input/DEPhenofile_all.csv")  #184,15
+
+# Check/remove duplicates if any
+meta_no_duplicates <- all_meta[!duplicated(all_meta$R2_RNA_number), ] #184,15
+
+meta_no_duplicates <- meta_no_duplicates %>% remove_rownames %>% column_to_rownames(var="R2_RNA_number") 
+
+meta_no_duplicates <- meta_no_duplicates[rownames(meta_no_duplicates) %in% colnames(count_matrix), ]
+
+```
+
+
+```{r Preparing the data, include=FALSE}
+# Find the intersection of sample names
+
+# Remove _L004 from column names
+colnames(count_matrix) <- gsub("_L004", "", colnames(count_matrix))
+
+# Print updated column names
+#print(colnames(count_matrix))
+
+
+common_samples <- intersect(colnames(count_matrix), rownames(meta_no_duplicates))
+
+# Filter counts matrix and metadata to include only the common samples
+counts_matrix_filtered <- count_matrix[, common_samples]
+sample_metadata_filtered <- meta_no_duplicates[common_samples, ]
+
+## sorting : The rownames of metadata and colnames of countsdata should be in the same order
+counts_matrix_filtered <- counts_matrix_filtered[, rownames(sample_metadata_filtered)]
+all(rownames(sample_metadata_filtered) == colnames(counts_matrix_filtered))
+
+```
+
+all 179 colnames of count_matrix are also present in beta_matrix and are considered for eQTM analysis later on. 
+Therefore, proceeding for DE Analysis for all 179 samples. 
+
+
+```{r Creating DEseq object, include=FALSE}
+
+sample_metadata_filtered$R1R2_DeltaSBP_CaseControl = as.factor(sample_metadata_filtered$R1R2_DeltaSBP_CaseControl)
+sample_metadata_filtered$R1R2_DeltaSBP_CaseControl <- relevel(sample_metadata_filtered$R1R2_DeltaSBP_CaseControl, ref = "0")
+
+sample_metadata_filtered$Sex = as.factor(sample_metadata_filtered$Sex)
+sample_metadata_filtered$Site = as.factor(sample_metadata_filtered$Site)
+sample_metadata_filtered$CD8T = as.numeric(sample_metadata_filtered$CD8T)
+sample_metadata_filtered$CD8T = as.numeric(sample_metadata_filtered$CD8T)
+sample_metadata_filtered$CD4T = as.numeric(sample_metadata_filtered$CD4T)
+sample_metadata_filtered$NK = as.numeric(sample_metadata_filtered$NK)
+sample_metadata_filtered$Bcell = as.numeric(sample_metadata_filtered$Bcell)
+sample_metadata_filtered$Mono = as.numeric(sample_metadata_filtered$Mono)
+sample_metadata_filtered$Neu = as.numeric(sample_metadata_filtered$Neu)
+sample_metadata_filtered$R2_Age = as.numeric(sample_metadata_filtered$R2_Age)
+
+
+
+any(is.na(sample_metadata_filtered))  #Should be no NAs
+                                          
+dds <- DESeqDataSetFromMatrix(
+  countData = round(counts_matrix_filtered),
+  colData = sample_metadata_filtered,
+  design = ~ R1R2_DeltaSBP_CaseControl + Sex + R2_Age + Site + CD8T + CD4T + NK + Bcell + Mono + Neu 
+)
+
+```
+
+
+
+```{r Filtering out low_variance genes, include=FALSE}
+
+# Load DESeq2 library
+library(DESeq2)
+
+# Step 1: Sanity check Calculate the variance across genes (before normalization)
+# Calculate the standard deviation of gene expression for each gene (row)
+expr_data <- assay(dds)
+constant_rows_expr <- apply(expr_data, 1, function(x) sd(x, na.rm = TRUE) == 0)  # Low variance genes are alreadz removed
+dds_filtered <- dds[!constant_rows_expr, ]  #no_constant_genes
+
+# Check the number of genes before and after filtering
+cat("Number of genes before filtering: ", nrow(dds), "\n")
+cat("Number of genes after filtering: ", nrow(dds_filtered), "\n")
+
+
+
+dds <- DESeq(dds)
+
+# Extract normalized counts from the dds_filtered object
+normalized_counts <- counts(dds, normalized = TRUE)
+normalized_counts_matrix <- normalized_counts
+
+
+write.csv(normalized_counts_matrix, "/project/RNAseq/output/normalized_genecounts_27022025.csv")
+
+```
+
+
+```{r Differential expression analysis, echo=FALSE}
+
+# Perform DE analysis using DESeq2 on the filtered dds object
+dds <- DESeq(dds)
+
+# Obtain results (e.g., for condition comparison)
+res <- results(dds)
+
+
+# Filter results by adjusted p-value < 0.05
+res_filtered <- res[which(res$padj < 0.05),]
+
+# View the results
+head(res_filtered)
+
+# Optionally, save the results to a file
+write.csv(as.data.frame(res_filtered), file = "/project/RNAseq/output/27022025_DE_filtered_genes.csv")
+
+write.csv(as.data.frame(res), file = "/project/RNAseq/output/27022025_DE_full_genes.csv")
+
+
+```
+
+
+
+```{r Valcano plots, echo=FALSE}
+
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+
+# Assuming `res` is your DESeq2 results object
+res_filtered <- as.data.frame(res) %>%
+  filter(!is.na(log2FoldChange) & !is.na(padj))
+
+# Define upregulated and downregulated genes based on log2FoldChange and padj criteria
+upregulated_count <- sum(res_filtered$log2FoldChange > 0 & res_filtered$padj < 0.05)
+downregulated_count <- sum(res_filtered$log2FoldChange < 0 & res_filtered$padj < 0.05)
+
+# Create Volcano plot with enhanced visualization
+volcano <- ggplot(res_filtered, aes(x = log2FoldChange, y = -log10(padj))) +
+  geom_point(aes(color = padj < 0.05 & abs(log2FoldChange) > 0), alpha = 0.7, size = 2) + 
+  scale_color_manual(values = c("grey", "red")) +  # Red for significant points
+  theme_minimal(base_size = 15) +  # Clean minimal theme with larger base font
+  labs(
+    title = "Volcano Plot of Differentially Expressed Genes",
+    x = "Log2 Fold Change",
+    y = "-Log10 Adjusted P-value"
+  ) +
+  
+  # Highlight the significance threshold (padj < 0.05 and |log2FoldChange| > 1)
+  #geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black", size = 0.8) +
+  #geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "black", size = 0.8) +
+  # Annotate the counts for upregulated and downregulated genes
+  annotate("text", x = 7, y = 3, label = paste("Upregulated:", upregulated_count), color = "red", size = 4, hjust = 0) +
+  annotate("text", x = -25, y = 5, label = paste("Downregulated:", downregulated_count), color = "blue", size = 4, hjust = 0) +
+  # Improve plot appearance (e.g., axis ticks, grid, and overall theme)
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 18, face = "bold"),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.position = "none"  # Hide legend for cleaner plot
+  )
+
+ggsave("/project/RNAseq/output/plots/27022025_volcanoplot.png", volcano, width = 10, height = 10, dpi = 600)
+
+```
+
+
+
+
+```{r For Genes of Interest, echo=FALSE}
+
+# Load necessary libraries
+library(DESeq2)
+library(ggplot2)
+library(tidyr)
+
+# Extract counts for the gene of interest (e.g., "ENSG00000170315.14")
+gene_of_interest <- c("ENSG00000136193")
+
+gene_counts <- counts(dds)[gene_of_interest, ]
+
+
+# Create a data frame with gene counts and the condition variable (e.g., R1R2_CaseControl)
+plot_data <- data.frame(
+  GeneCounts = gene_counts,
+  R1R2_CaseControl = colData(dds)$R1R2_DeltaSBP_CaseControl
+)
+
+# Create the boxplot using ggplot
+gex_barplot <- ggplot(plot_data, aes(x = R1R2_CaseControl, y = GeneCounts, fill = R1R2_CaseControl)) +
+  geom_boxplot(alpha = 0.7) +  # Set transparency for the boxplot
+  labs(
+    title = paste("Gene Expression across Case and Control", gene_of_interest),
+    x = "Case/Control", 
+    y = "Expression"
+  ) +
+  scale_fill_manual(values = c("#0072B2", "#D55E00")) +  # Consistent color scheme (colorblind-friendly)
+  theme_minimal(base_size = 16) +  # Consistent theme with large base size
+  theme(
+    axis.title = element_text(face = "bold", size = 14),  # Bold axis titles, consistent with PCA
+    axis.text = element_text(size = 12),  # Consistent axis text size
+    plot.title = element_text(face = "bold", size = 18, hjust = 0.5),  # Bold, centered title
+    plot.subtitle = element_text(size = 14),  # Optional subtitle for clarity
+    legend.position = "none",  # Hide legend for simplicity (if needed)
+    panel.grid.major = element_blank(),  # Remove major grid lines
+    panel.grid.minor = element_blank(),  # Remove minor grid lines
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5)  # Add a border around the plot
+  )
+
+ggsave("/project/RNAseq/output/plots/goi_ENSG00000136193.png",gex_barplot,  height = 6, width = 10, dpi = 400)
+
+```
+
+
+
+```{r Converting Ensembl with version Ids to Entrez, echo=FALSE}
+
+# library(biomaRt)
+# 
+# # Your list of Ensembl IDs with version numbers
+# ensembl_ids_with_versions <- rownames(res)
+# 
+# # Remove the version numbers (everything after the dot)
+# ensembl_ids <- sub("\\.\\d+$", "", ensembl_ids_with_versions)
+# 
+# # Print the cleaned Ensembl IDs
+# print(ensembl_ids)
+# 
+# # Load the biomaRt library
+# library(biomaRt)
+# 
+# # Connect to Ensembl database (human dataset)
+# ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+# 
+# # Convert cleaned Ensembl gene IDs to gene symbols
+# gene_mapping <- getBM(attributes = c('ensembl_gene_id', 'entrezgene_id'),
+#                       filters = "ensembl_gene_id",
+#                       values = ensembl_ids,
+#                       mart = ensembl)
+# 
+# # Print the result
+# print(gene_mapping)
+
+
+```
+
+
+```{r Gene Set Enrichment Analysis Data Preparation, echo=FALSE}
+
+# # install.packages("BiocManager")
+# # BiocManager::install(c("clusterProfiler", "org.Hs.eg.db", "enrichplot", "ggplot2"))
+# 
+# # Load required libraries
+# library(clusterProfiler)
+# library(org.Hs.eg.db)
+# library(enrichplot)
+# library(ggplot2)
+# 
+# # Example: Assuming you have a DESeq2 result object called `res` with log2FoldChange and padj columns
+# res_df<- as.data.frame(res)
+# 
+# # Add gene symbols to the `res` dataframe
+#  res_df$ensembl_gene_id = rownames(res_df)
+# 
+# 
+# # Merge the dataframes (this will retain all rows from `res` and add gene symbols where they exist in `gene_mapping`)
+# res_with_symbols <- merge(res_df, gene_mapping, by.x = "ensembl_gene_id", by.y = "ensembl_gene_id")
+# 
+# # Check the first few rows to see the result
+# head(res_with_symbols)
+# 
+# # Create a ranked gene list (e.g., using log2FoldChange)
+# geneList <- res_with_symbols$log2FoldChange
+# names(geneList) <- res_with_symbols$entrezgene_id  # Use gene symbols as names
+# 
+# # Remove NA values (if any gene symbol is NA, we exclude it from GSEA)
+# geneList <- geneList[!is.na(names(geneList))]
+# 
+# # Sort the gene list in decreasing order (important for GSEA)
+# geneList <- sort(geneList, decreasing = TRUE)
+# 
+# # Check the top of the gene list
+# head(geneList)
+# 
+# ```
+# 
+# ```{r Gene Set Enrichment Analysis - MF, BP and KEGG Pathways, echo=FALSE}
+# 
+# # Visualize the results with a Dot Plot
+# 
+# library(msigdbr)
+# 
+# # Load MSigDB gene sets for Biological Processes, Molecular Functions, and KEGG Pathways
+# bp_genesets <- msigdbr(category = "C5", subcategory = "BP")  # Biological Process (BP)
+# mf_genesets <- msigdbr(category = "C5", subcategory = "MF")  # Molecular Function (MF)
+# kegg_genesets <- msigdbr(category = "C2", subcategory = "KEGG")  # KEGG Pathways
+# 
+# # Perform GSEA for Biological Processes
+# gsea_bp <- gseGO(geneList, OrgDb = org.Hs.eg.db, keyType = "ENTREZID", 
+#                  ont = "BP", pvalueCutoff = 0.05, verbose = FALSE)
+# 
+# # Perform GSEA for Molecular Functions
+# gsea_mf <- gseGO(geneList, OrgDb = org.Hs.eg.db, keyType = "ENTREZID", 
+#                  ont = "MF", pvalueCutoff = 0.05, verbose = FALSE)
+# 
+# # Perform GSEA for KEGG Pathways
+# gsea_kegg <- gseKEGG(geneList, organism = "hsa", pvalueCutoff = 0.05)
+# 
+# 
+# dotplot(gsea_bp, showCategory = 10, title = "Top 10 Enriched Biological Processes") +
+#   theme_minimal(base_size = 14) +
+#   labs(title = "Biological Process - GSEA Dot Plot", x = "Gene Set", y = "Enrichment Score (ES)") +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+# 
+# dotplot(gsea_mf, showCategory = 10, title = "Top 10 Enriched Molecular Functions") +
+#   theme_minimal(base_size = 14) +
+#   labs(title = "Molecular Function - GSEA Dot Plot", x = "Gene Set", y = "Enrichment Score (ES)") +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+# 
+# dotplot(gsea_kegg, showCategory = 10, title = "Top 10 Enriched KEGG Pathways") +
+#   theme_minimal(base_size = 14) +
+#   labs(title = "KEGG Pathways - GSEA Dot Plot", x = "Gene Set", y = "Enrichment Score (ES)") +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+# 
+# # Install the gridExtra package
+# #install.packages("gridExtra")
+# library(gridExtra)
+# 
+# # Arrange the three plots into a grid layout
+# grid.arrange(
+#   dotplot(gsea_bp, showCategory = 10) + ggtitle("Biological Processes"),
+#   dotplot(gsea_mf, showCategory = 10) + ggtitle("Molecular Functions"),
+#   dotplot(gsea_kegg, showCategory = 10) + ggtitle("KEGG Pathways"),
+#   ncol = 3  # Arrange plots in a single row
+# )
+# 
+# ```

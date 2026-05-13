@@ -1,0 +1,120 @@
+
+---
+title: "RNA-seq Processing Pipeline"
+author: "Dr. Manasa Kalya"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# RNA-seq Analysis Pipeline
+
+This pipeline processes RNA-seq FASTQ files, performs quality control (QC), quantifies transcripts using Salmon, and generates gene-level count matrices.  
+It combines shell-based and R-based steps into a unified workflow for reproducibility.
+
+---
+
+## 1. Sample Processing with Fastp and Salmon
+
+This section assumes that `fastp`, `salmon`, and `samtools` are installed and accessible from the command line.
+
+```{bash}
+# Define paths (edit these to match your project layout)
+INPUT_DIR="./data/fastq/"
+OUTPUT_DIR="./output/salmon_results/"
+SALMON_INDEX="./data/reference/salmon_index"
+
+mkdir -p "$OUTPUT_DIR"
+
+SAMPLES=("Sample1" "Sample2")  # Generalized sample names
+LANES=("L001" "L002")
+
+for SAMPLE in "${SAMPLES[@]}"; do
+  SAMPLE_OUT="${OUTPUT_DIR}/${SAMPLE}"
+  mkdir -p "$SAMPLE_OUT"
+
+  for LANE in "${LANES[@]}"; do
+    R1="${INPUT_DIR}/${SAMPLE}_${LANE}_R1.fastq.gz"
+    R2="${INPUT_DIR}/${SAMPLE}_${LANE}_R2.fastq.gz"
+
+    echo "Running Fastp for ${SAMPLE}_${LANE}..."
+    fastp -i "$R1" -I "$R2" \
+          -o "${SAMPLE_OUT}/${SAMPLE}_${LANE}_R1_trimmed.fastq.gz" \
+          -O "${SAMPLE_OUT}/${SAMPLE}_${LANE}_R2_trimmed.fastq.gz" \
+          --detect_adapter_for_pe -l 25
+
+    echo "Running Salmon for ${SAMPLE}_${LANE}..."
+    salmon quant -i "$SALMON_INDEX" -l A \
+        -1 "${SAMPLE_OUT}/${SAMPLE}_${LANE}_R1_trimmed.fastq.gz" \
+        -2 "${SAMPLE_OUT}/${SAMPLE}_${LANE}_R2_trimmed.fastq.gz" \
+        --validateMappings --gcBias \
+        -o "${SAMPLE_OUT}/${SAMPLE}_${LANE}_quant"
+  done
+done
+```
+
+---
+
+## 2. Create Transcript-to-Gene Mapping
+
+```{r tx2gene-mapping, message=FALSE, warning=FALSE}
+library(readr)
+library(dplyr)
+
+gtf_file <- "./data/reference/gencode.v42.annotation.gtf.gz"
+gtf_data <- read_tsv(gtf_file, comment = "#", col_names = FALSE)
+
+colnames(gtf_data) <- c("seqname", "source", "feature", "start", "end", "score",
+                        "strand", "frame", "attribute")
+
+transcripts_data <- gtf_data %>%
+  filter(feature == "transcript") %>%
+  mutate(
+    gene_id = gsub('.*gene_id "([^"]+)".*', '\1', attribute),
+    transcript_id = gsub('.*transcript_id "([^"]+)".*', '\1', attribute)
+  ) %>%
+  select(gene_id, transcript_id) %>%
+  distinct() %>%
+  na.omit()
+
+write_tsv(transcripts_data, "./output/transcript_to_gene_mapping.tsv")
+```
+
+---
+
+## 3. Summarize Transcript-Level Quantification to Gene-Level Counts
+
+```{r summarize-counts, message=FALSE}
+library(tximport)
+
+samples <- c("Sample1", "Sample2")
+tx2gene <- read_tsv("./output/transcript_to_gene_mapping.tsv")
+tx2gene_df <- tx2gene[, c("transcript_id", "gene_id")]
+
+quant_files <- file.path("./output/salmon_results", samples, paste0(samples, "_L001_quant", "/quant.sf"))
+
+names(quant_files) <- samples
+
+txi <- tximport(files = quant_files, type = "salmon", tx2gene = tx2gene_df, ignoreAfterBar = TRUE)
+counts_matrix <- txi$counts
+
+write.csv(counts_matrix, "./output/gene_counts_matrix.csv")
+```
+
+---
+
+## 4. Merge Count Matrices and Generate Final Expression Table
+
+```{r merge-matrices, message=FALSE}
+library(readr)
+library(dplyr)
+
+df <- read.csv("./output/gene_counts_matrix.csv", row.names = 1)
+df <- tibble::rownames_to_column(df, var = "gene_id")
+write.csv(df, "./output/final_gene_expression_matrix.csv", row.names = FALSE)
+```
+
+---
+
+# ✅ Done!
+
+You now have a gene-level count matrix ready for downstream analysis like normalization, DESeq2, or visualization.
