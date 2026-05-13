@@ -125,7 +125,7 @@ The analysis pipeline is organized into sequential modules:
 - Supplementary and reviewer-requested analyses:
   - Correlation analyses
   - Power calculations
-  - Post hoc robustness checks
+  - Revision overlap with other previous EWAS 
 
 ---
 
