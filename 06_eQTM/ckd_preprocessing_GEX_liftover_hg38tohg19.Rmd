@@ -1,0 +1,372 @@
+---
+title: "GEX_liftover"
+output: html_document
+date: "2025-01-24"
+Author : Manasa Kalya
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# GitHub-ready relative paths. Run this script from the repository root.
+project_dir <- getwd()
+input_dir <- file.path(project_dir, "input")
+output_dir <- file.path(project_dir, "output")
+plots_dir <- file.path(output_dir, "plots")
+functions_dir <- file.path(project_dir, "functions")
+
+dir.create(input_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(plots_dir, showWarnings = FALSE, recursive = TRUE)
+
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r Libraries}
+# Install necessary package (if not installed)
+
+library("GenomicRanges")
+library(rtracklayer)
+library(GenomicRanges)
+library(rtracklayer)
+library(readr)
+library(tximport)
+library(dplyr)
+library(tidyverse)
+
+#install.packages("R.utils")
+library(R.utils)
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r Load hg38 gtf file, echo=FALSE}
+
+# Load the GTF file for hg38
+gtf_hg38 <- import(file.path(input_dir, "gencode.v42.primary_assembly.annotation.gtf.gz"))
+
+# Extract relevant information: gene names and coordinates (chromosome, start, end)
+# Extract gene entries (type == "gene")
+gene_gr <- gtf_hg38[gtf_hg38$type == "gene"]
+
+# Extract chromosome, start, and end coordinates
+seqnames <- seqnames(gene_gr)
+start_coords <- start(gene_gr)
+end_coords <- end(gene_gr)
+
+# Extract gene metadata (gene_id and gene_name)
+gene_metadata <- mcols(gene_gr)[, c("gene_id", "gene_name")]
+
+# Combine the extracted information into a data frame
+gene_data <- data.frame(
+  seqnames = as.character(seqnames),
+  start = start_coords,
+  end = end_coords,
+  gene_id = gene_metadata$gene_id,
+  gene_name = gene_metadata$gene_name
+)
+
+# View the first few rows of the gene data
+head(gene_data)
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r Download and access hg38Tohg19 liftover-chain, echo=FALSE}
+
+# Doownload liftover chain hg38tohg19
+# wget http://hgdownload.cse.ucsc.edu/goldenpath/hg38/liftOver/hg38ToHg19.over.chain.gz
+
+# Unzip the chain file if it is in .gz format
+# gunzip("hg38ToHg19.over.chain.gz", overwrite = TRUE)
+
+# Load the liftOver chain file for hg38 to hg19
+
+chain_file <- import.chain(file.path(input_dir, "hg38ToHg19.over.chain"))
+
+# Perform the liftOver conversion
+lifted_gr <- liftOver(gene_gr, chain_file)  #Check if all gene_gr is availkable in hg19 chain fail 
+
+```
+
+
+```{r further processing hg38Tohg19 liftover-chain, echo=FALSE}
+
+# If lifted_gr is a GRangesList, we need to unlist it correctly                           ####
+
+if (inherits(lifted_gr, "GRangesList")) {                                                 ####
+  # Unlist the GRangesList into a single GRanges object                                   ####
+  lifted_gr <- unlist(lifted_gr, use.names = FALSE)                                       ####
+}
+
+# Now you can check the number of NA values again in lifted_gr
+num_failed <- sum(is.na(lifted_gr))
+cat("Number of failed liftover conversions:", num_failed, "\n")
+
+# If there are failed entries, print them
+if (num_failed > 0) {
+  failed_liftover <- lifted_gr[is.na(lifted_gr)]
+  cat("Failed liftover conversions:\n")
+  print(failed_liftover)
+} else {
+  cat("No failed liftover conversions.\n")
+}
+
+# Says 0 missing in liftover ... 
+
+# Check the lifted GRanges object
+head(lifted_gr)
+
+```
+
+```{r Loading GEX table for RODAM project (hg38), echo=FALSE}
+
+
+expr_data <- read.csv(file.path(input_dir, "allsamples_normalized_filtered(10countsin1)_DESeq2.csv"))
+
+# gene identifier in expr_data and dmrs_gr should be same
+rownames(expr_data) <- expr_data$X
+# expr_data <- expr_data[, !colnames(expr_data) %in% "X"]
+
+```
+
+
+
+```{r Liftover GEX table for RODAM project (hg38), echo=FALSE}
+
+# Extract Ensembl gene IDs from lifted GRanges object
+lifted_gene_ids <- as.data.frame(lifted_gr)$gene_id
+
+# Extract hg19 gene information (chromosome, start, end) from lifted_gr
+lifted_seqnames <- seqnames(lifted_gr)
+lifted_start_coords <- start(lifted_gr)
+lifted_end_coords <- end(lifted_gr)
+lifted_gene_ids <- as.data.frame(lifted_gr)$gene_id     # has version number 
+lifted_gene_ids <- sub("\\.\\d+$", "", lifted_gene_ids)  # to remove version number to match expr_data
+
+lifted_gene_name <- as.data.frame(lifted_gr)$gene_name
+
+
+# Initialize new columns for the final dataframe
+#expr_data$hg38_ensembl_id <- NA
+#expr_data$hg19_ensembl_id <- NA
+
+
+# Debug: Check how many Ensembl IDs are in the DEG table
+cat("Number of rows in Expression table:", nrow(expr_data), "\n")
+
+# If lifted_gr is a GRangesList, we need to unlist it correctly
+if (inherits(lifted_gr, "GRangesList")) {
+  # Unlist the GRangesList into a single GRanges object
+  lifted_gr <- unlist(lifted_gr, use.names = FALSE)
+}
+
+# Now you can check the number of NA values again in lifted_gr
+num_failed <- sum(is.na(lifted_gr))
+cat("Number of failed liftover conversions:", num_failed, "\n")
+
+# If there are failed entries, print them
+if (num_failed > 0) {
+  failed_liftover <- lifted_gr[is.na(lifted_gr)]
+  cat("Failed liftover conversions:\n")
+  print(failed_liftover)
+} else {
+  cat("No failed liftover conversions.\n")
+}
+
+
+
+#expr_data$hg38_ensembl_id[rownames(expr_data) %in% gene_data$gene_id] <- gene_data$gene_id    #gene_data is hg38
+# expr_data$hg19_ensembl_id[rownames(expr_data) %in% mcols(lifted_gr)$gene_id] <- mcols(lifted_gr)$gene_id   #lifted_gr is hg38 liftedover to hg19
+
+# Create a 'gene_id' column in expr_data using rownames (for merging with hg38)
+expr_data$gene_id <- rownames(expr_data)
+# Now merge expr_data with gene_data using 'gene_id' column (merge hg38 information)
+hg38_expr_data <- merge(expr_data, gene_data, by = "gene_id", all.x = TRUE)
+hg38_expr_data$hg38_ensembl_id <- hg38_expr_data$gene_id
+
+
+lifted_gr_df <- as.data.frame(lifted_gr)
+
+# Check if gene_id exists in the metadata columns of lifted_gr
+# If "gene_id" is part of the metadata columns, use it directly.
+# Otherwise, adjust this to the correct column name.
+lifted_gr_df <- lifted_gr_df[, c("gene_id", "seqnames", "start", "end")]   #39694 duplicates
+
+# Aggregate by gene_id, taking the first row for each gene_id
+lifted_gr_df_aggregated <- lifted_gr_df %>%
+  group_by(gene_id) %>%
+  summarise(
+    seqnames = first(seqnames),
+    start = first(start),
+    end = first(end)
+  )
+# 
+# # Perform the merge (left join on gene_id) to include hg19 information
+# hg1938_expr_data <- merge(hg38_expr_data, lifted_gr_df_aggregated, by = "gene_id", all.x = TRUE)
+# hg1938_expr_data$hg19_ensembl_id   <- hg1938_expr_data$gene_id
+# 
+# # View the merged result
+# head(hg1938_expr_data)
+
+# Merge hg38_expr_data with lifted_gr_df based on gene_id
+hg19_expr_data <- merge(hg38_expr_data, lifted_gr_df[, c("gene_id", "seqnames", "start", "end")], by = c("gene_id"), all.x = TRUE)
+
+# Optional: Add hg19 Ensembl ID column, same as gene_id (if necessary)
+hg19_expr_data$hg19_ensembl_id <- hg19_expr_data$gene_id
+
+# write.csv(hg19_expr_data, "liftOver_hg38tohg19_dataframe.csv")
+
+# preparing final dataframe for eqtm analysis
+# Correctly define the columns to remove
+rm <- c("seqnames.x", "seqnames.y", "start.x", "start.y", "end.x", "end.y", "hg38_ensembl_id", "gene_id", 'gene_name')
+
+# Remove the specified columns
+df9 <- hg19_expr_data[, !colnames(hg19_expr_data) %in% rm]     
+
+library(dplyr)
+
+summarized_df9 <- df9 %>%
+  group_by(hg19_ensembl_id) %>%  # Group by 'hg19_ensembl_id'
+  summarise(across(everything(),  # Apply function to all columns
+                   mean,           # Only calculate the mean
+                   na.rm = TRUE),  # Ignore NA values
+            .groups = 'drop')  # Drop the grouping after summarizing
+
+# View the summarized data
+head(summarized_df9)
+
+write.csv(summarized_df9, file.path(output_dir, "CKD_hg19_filteredNormalizedGEX_touse.csv"))
+
+#write.csv(hg1938_expr_data, "./processedGEX_liftover_hg38Tohg19.csv")
+
+```
+
+
+
+
+
+
+```{r junk_1, echo=FALSE}
+
+# Extract Ensembl gene IDs from lifted GRanges object
+lifted_gene_ids <- as.data.frame(lifted_gr)$gene_id
+
+# Extract hg19 gene information (chromosome, start, end) from lifted_gr
+lifted_seqnames <- seqnames(lifted_gr)
+lifted_start_coords <- start(lifted_gr)
+lifted_end_coords <- end(lifted_gr)
+lifted_gene_ids <- as.data.frame(lifted_gr)$gene_id
+lifted_gene_name <- as.data.frame(lifted_gr)$gene_name
+
+# Initialize new columns for the final dataframe
+expr_data$hg38_ensembl_id <- NA
+expr_data$hg19_ensembl_id <- NA
+
+# Debug: Check how many Ensembl IDs are in the DEG table
+cat("Number of rows in DEG table:", nrow(expr_data), "\n")
+
+# If lifted_gr is a GRangesList, we need to unlist it correctly
+if (inherits(lifted_gr, "GRangesList")) {
+  # Unlist the GRangesList into a single GRanges object
+  lifted_gr <- unlist(lifted_gr, use.names = FALSE)
+}
+
+# Now you can check the number of NA values again in lifted_gr
+num_failed <- sum(is.na(lifted_gr))
+cat("Number of failed liftover conversions:", num_failed, "\n")
+
+# If there are failed entries, print them
+if (num_failed > 0) {
+  failed_liftover <- lifted_gr[is.na(lifted_gr)]
+  cat("Failed liftover conversions:\n")
+  print(failed_liftover)
+} else {
+  cat("No failed liftover conversions.\n")
+}
+
+# Create a 'gene_id' column in expr_data using rownames (for merging with hg38)
+expr_data$gene_id <- rownames(expr_data)
+
+# Now merge expr_data with gene_data using 'gene_id' column (merge hg38 information)
+hg38_expr_data <- merge(expr_data, gene_data, by = "gene_id", all.x = TRUE)
+
+# Extract the gene_id from lifted_gr and convert to a data.frame
+lifted_gr_df <- as.data.frame(lifted_gr)
+
+# Check if gene_id exists in the metadata columns of lifted_gr
+# If "gene_id" is part of the metadata columns, use it directly.
+# Otherwise, adjust this to the correct column name.
+lifted_gr_df <- lifted_gr_df[, c("gene_id", "seqnames", "start", "end")]
+
+# Perform the merge (left join on gene_id) to include hg19 information
+hg1938_expr_data <- merge(hg38_expr_data, lifted_gr_df, by = "gene_id", all.x = TRUE)
+
+# View the merged result
+head(hg1938_expr_data)
+
+
+
+# Sanity check 
+common_gene_ids <- intersect(unique_gene_ids_expr, unique_gene_ids_gene_data)
+cat("Number of common gene_ids between expr_data and gene_data:", length(common_gene_ids), "\n")
+# will print 20328
+common_gene_ids_lifted <- intersect(unique(expr_data$gene_id), unique(lifted_gr_df$gene_id))
+cat("Number of common gene_ids between expr_data and lifted_gr:", length(common_gene_ids_lifted), "\n")
+# will print 20308 
+
+# Few genes are not lifted over, lets check why? 
+# Find gene_ids in expr_data that are not in lifted_gr
+missing_gene_ids <- setdiff(rownames(expr_data), lifted_gr_df$gene_id)
+cat("Number of missing gene_ids in liftover:", length(missing_gene_ids), "\n")
+# Extract rows from expr_data where gene_ids are missing in lifted_gr
+# Check missing gene_ids in gene_data
+missing_in_gene_data <- missing_gene_ids[!(missing_gene_ids %in% gene_data$gene_id)]
+
+# Print any missing gene_ids from gene_data
+cat("Missing gene_ids in gene_data:", length(missing_in_gene_data), "\n")
+
+```
+```{r junk_2, echo=FALSE}
+
+# Merge hg38_expr_data with lifted_gr_df based on gene_id
+hg19_expr_data <- merge(hg38_expr_data, lifted_gr_df[, c("gene_id", "seqnames", "start", "end")], by = "gene_id", all.x = TRUE)
+
+# Optional: Add hg19 Ensembl ID column, same as gene_id (if necessary)
+hg19_expr_data$hg19_ensembl_id <- hg19_expr_data$gene_id
+
+# write.csv(hg19_expr_data, "liftOver_hg38tohg19_dataframe.csv")
+
+# preparing final dataframe for eqtm analysis
+# Correctly define the columns to remove
+rm <- c("seqnames.x", "seqnames.y", "start.x", "start.y", "end.x", "end.y", "hg38_ensembl_id", "gene_id", 'gene_name')
+
+# Remove the specified columns
+df9 <- hg19_expr_data[, !colnames(hg19_expr_data) %in% rm]     
+
+library(dplyr)
+
+summarized_df9 <- df9 %>%
+  select(-hg19_ensembl_id) %>%  # Exclude 'hg19_ensembl_id' column
+  summarise(across(everything(),  # Apply function to all remaining columns
+                   mean,           # Only calculate the mean
+                   na.rm = TRUE))  # Ignore NA values
+
+# View the summarized data
+head(summarized_df9)
+
+
+rownames(df9) <- hg19_expr_data$hg19_ensembl_id    #duplicate rownames are not allowed
+
+
+
+```

@@ -1,0 +1,597 @@
+---
+title: "CorrelationPlot_eQTM.Rmd"
+output: html_document
+date: "01-08-2025"
+Author: Dr. Manasa Kalya
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# GitHub-ready relative paths. Run this script from the repository root.
+project_dir <- getwd()
+input_dir <- file.path(project_dir, "input")
+output_dir <- file.path(project_dir, "output")
+plots_dir <- file.path(output_dir, "plots")
+functions_dir <- file.path(project_dir, "functions")
+
+dir.create(input_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(plots_dir, showWarnings = FALSE, recursive = TRUE)
+
+```
+
+## R Markdown
+
+This RMD file is to create correlationPlots for eQTM outputs. 
+CKD binary Cohort - samples and controls 
+1. eqtm is run for whole cohort of 31 controls and 19 samples
+2. eQTM correlations within class of controls 
+3. eqtm correlations within class of samples 
+
+All these are to be depicted in the final - publication ready plots !
+
+```{r read RDS file}
+
+load(file.path(output_dir, "output_eQTM_CKD_binary.RData"))
+
+#reading meta_info file 
+all_meta <- read.csv(file.path(input_dir, "2025.09.29.RNA_CKD_Muhau_Pheno_Timepoint2.csv"))
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r setting env, echo=FALSE}
+# Assuming your function and libraries are loaded
+
+# source(file.path(functions_dir, "eQTM_plot.R"))
+
+library(biomaRt)
+library(grid)
+library(Gviz)
+library(tidyr)
+library(ggpubr)
+library(gridExtra)
+library(SummarizedExperiment)
+
+meth_data <- assays(eqtm.hg19.ckd$dmrs_se)$meth_summarized
+expr_data <- assays(eqtm.hg19.ckd$dmrs_se)$expr
+
+# Assuming all_meta_info$R1R2caseControl is a vector where rownames match colnames of expr_data and meth_data
+# Find the matching columns between expr_data and R2_RNA_number
+matching_columns <- intersect(colnames(expr_data), all_meta$R2_RNA_number)
+print(matching_columns)
+
+# Correct way to subset based on matching column names
+expr_groups <- all_meta$defCKD_R2[match(colnames(expr_data), all_meta$R2_RNA_number)]
+meth_groups <- all_meta$defCKD_R2[match(colnames(meth_data), all_meta$R2_RNA_number)]
+
+# Convert the 0 and 1 values in R1R2caseControl to "control" and "sample"
+expr_groups <- ifelse(expr_groups == 0, "control", "sample")
+meth_groups <- ifelse(meth_groups == 0, "control", "sample")
+
+# Create united_groups by combining meth_groups and expr_groups
+united_groups <- paste(meth_groups, expr_groups, sep = "_")
+
+#dmrs_se_2 <- eqtm.hg38$dmrs_se 
+anno_gr <- rowRanges(eqtm.hg19.ckd$dmrs_se)
+
+```
+
+######################################################################################################
+####################### FINAL PLOTTING ##############################################
+
+
+## Lets plot for ZFP5 > ENSG00000204644
+index for this gene in eqtm data object will be stored in (index) column 
+For ZFP5, index = 1717
+
+
+sum(expr_values == 0)
+[1] 4 
+so, there are samples with 0 value in expression before the log-transformation and these appear as dots on the 0 value table 
+
+full : -0.775930742	-0.865611988	-0.680088124	0.001
+controls : -0.817873038	-0.892736949	-0.714671319	6	0.001
+samples : -0.754858452	-0.882062577	-0.342016078	6	0.001
+
+
+```{r Final Plot FOR ZFP57 > with manual stats for main and intracalss eqtm, echo=FALSE}
+
+# Load required libraries
+library(ggplot2)
+
+# Define the specific index (character format)
+#index <- "33"
+index = "1717"  #ZFP57
+
+# Extract the corresponding gene name
+gene_name <- rowData(eqtm.hg19.ckd$dmrs_se)$geneid[rowData(eqtm.hg19.ckd$dmrs_se)$index == index]
+
+
+# Find the correct row index based on the extracted index
+matched_index <- which(rowData(eqtm.hg19.ckd$dmrs_se)$index == index)
+
+# Extract expression & methylation values
+expr_values <- as.vector(assays(eqtm.hg19.ckd$dmrs_se)$expr[matched_index, ])
+meth_values <- as.vector(assays(eqtm.hg19.ckd$dmrs_se)$meth_summarized[matched_index, ])
+
+# **Manually define correlation statistics**
+# --- Main dataset (overall) ---
+cor_coef <- -0.775
+ci_lower <- -0.865
+ci_upper <- -0.680
+pval <- 0.001
+
+# --- Controls only ---
+control_cor_coef <- -0.817
+control_ci_lower <- -0.892
+control_ci_upper <- -0.714
+control_pval <- 0.001
+
+# --- Samples only ---
+sample_cor_coef <- -0.754
+sample_ci_lower <- -0.882
+sample_ci_upper <- -0.342
+sample_pval <- 0.001
+
+# Create dataframe for plotting
+plot_df <- data.frame(
+  expr = log2(expr_values + 1.1),  # Log2-transform expression values
+  meth = meth_values,
+  Sample = colnames(eqtm.hg19.ckd$dmrs_se),
+  Group = united_groups  # Use the precomputed sample/control groups
+)
+
+# Define correlation annotation text (overall)
+cor_text <- paste0( 
+                   "\nOverall: r = ", cor_coef, 
+                   "\n95% CI: [", ci_lower, ", ", ci_upper, "]",
+                   "\nP-value = ", pval)
+
+# Define correlation annotation for control group only
+control_cor_text <- paste0("controls: r = ", control_cor_coef, 
+                           "\n95% CI: [", control_ci_lower, ", ", control_ci_upper, "]",
+                           "\nP-value = ", control_pval)
+
+# Define correlation annotation for sample group only
+sample_cor_text <- paste0("case: r = ", sample_cor_coef, 
+                          "\n95% CI: [", sample_ci_lower, ", ", sample_ci_upper, "]",
+                          "\nP-value = ", sample_pval)
+
+# Rename "control_control" to "controls" and "sample_sample" to "Case"
+plot_df$Group <- gsub("control_control", "Control", plot_df$Group)
+plot_df$Group <- gsub("sample_sample", "Case", plot_df$Group)
+
+  
+ggplot(plot_df, aes(x = expr, y = meth)) +
+  
+  # Scatter points with respective group colors
+  geom_point(aes(fill = Group), shape = 21, size = 4, color = "black", alpha = 0.8) +  
+
+  # Overall regression line (for all data points) - solid black
+  geom_smooth(method = "lm", formula = y ~ x, se = TRUE, color = "black", linetype = "solid") +  
+
+  # Regression line for Controls - dashed red
+  geom_smooth(data = subset(plot_df, Group == "Control"), method = "lm", formula = y ~ x, 
+              aes(fill = Group), se = TRUE, color = "red", fill = "#F8766D", linetype = "dashed") +  
+
+  # Regression line for Samples - dashed blue
+  geom_smooth(data = subset(plot_df, Group == "Case"), method = "lm", formula = y ~ x, 
+              aes(fill = Group), se = TRUE, color = "blue", fill = "#00BFC4", linetype = "dashed") +  
+ # Regression line
+  theme_bw() +
+  xlab(expression(paste("Log2 Gene expression"))) +  
+  ylab("median β-value of DMR") +
+  ggtitle(paste("Correlation Plot for Gene: ZFP57 (", gene_name, ")")) +  
+
+  # Main correlation annotation (top-right)
+  annotate("text", x = min(plot_df$expr) , y = max(plot_df$meth) * 0.6,
+           label = cor_text, hjust = 0, size = 3, fontface = "bold", color = "black") +  
+
+  # Control-specific annotation (bottom-left)
+  annotate("text", x = min(plot_df$expr), y = max(plot_df$meth) * 0.5, 
+           label = control_cor_text, hjust = 0, size = 3, fontface = "bold", color = "red") +  
+
+  # Sample-specific annotation (middle-left)
+  annotate("text", x = min(plot_df$expr), y = max(plot_df$meth) * 0.4 ,
+           label = sample_cor_text, hjust = 0, size = 3, fontface = "bold", color = "#00BFC4") +  
+
+  scale_fill_manual(values = c("Control" = "#F8766D", "Case" = "#00BFC4",
+                               "control_sample" = "#C77CFF", "sample_control" = "#7CAE00")) +  # Custom colors for group combinations
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    axis.title = element_text(size = 14, face = "bold"),
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12),
+    legend.position = "right"
+  )
+
+# Save the updated plot
+ggsave(file.path(plots_dir, "ZFP57(ENSG00000204644)_correlationplot.png"), dpi = 600, width = 10, height = 6)
+
+```
+
+Gene HLA-DRB5 
+ENSG00000198502 - 
+full_data -0.800061467	-0.865262769	-0.635535749	0.001
+controls -0.77577863	-0.890124731	-0.525986199	3	0.001
+samples -0.884145108	-0.950836397	-0.742735809	3	0.001
+
+
+index > 1321
+
+
+```{r Final Plot FOR HLA-DRB5 gene ENSG00000198502 > with manual stats for main and intracalss eqtm, echo=FALSE}
+
+# Load required libraries
+library(ggplot2)
+
+# Define the specific index (character format)
+#index <- "33"
+index = "1321"  #HLA-DRB5
+
+# Extract the corresponding gene name
+gene_name <- rowData(eqtm.hg19.ckd$dmrs_se)$geneid[rowData(eqtm.hg19.ckd$dmrs_se)$index == index]
+
+
+# Find the correct row index based on the extracted index
+matched_index <- which(rowData(eqtm.hg19.ckd$dmrs_se)$index == index)
+
+# Extract expression & methylation values
+expr_values <- as.vector(assays(eqtm.hg19.ckd$dmrs_se)$expr[matched_index, ])
+meth_values <- as.vector(assays(eqtm.hg19.ckd$dmrs_se)$meth_summarized[matched_index, ])
+
+# **Manually define correlation statistics**
+# --- Main dataset (overall) ---
+cor_coef <- -0.800
+ci_lower <- 	-0.865
+ci_upper <- -0.635
+pval <- 0.001
+
+# --- Controls only ---
+control_cor_coef <- -0.775
+control_ci_lower <- 	-0.890
+control_ci_upper <- 	-0.525
+control_pval <- 0.001
+
+# --- Samples only ---
+sample_cor_coef <- -0.884
+sample_ci_lower <--0.950
+sample_ci_upper <- -0.742
+sample_pval <- 0.001
+
+# Create dataframe for plotting
+plot_df <- data.frame(
+  expr = log2(expr_values + 1),  # Log2-transform expression values
+  meth = meth_values,
+  Sample = colnames(eqtm.hg19.ckd$dmrs_se),
+  Group = united_groups  # Use the precomputed sample/control groups
+)
+
+# Define correlation annotation text (overall)
+cor_text <- paste0( 
+                   "\nOverall: r = ", cor_coef, 
+                   "\n95% CI: [", ci_lower, ", ", ci_upper, "]",
+                   "\nP-value = ", pval)
+
+# Define correlation annotation for control group only
+control_cor_text <- paste0("controls: r = ", control_cor_coef, 
+                           "\n95% CI: [", control_ci_lower, ", ", control_ci_upper, "]",
+                           "\nP-value = ", control_pval)
+
+# Define correlation annotation for sample group only
+sample_cor_text <- paste0("case: r = ", sample_cor_coef, 
+                          "\n95% CI: [", sample_ci_lower, ", ", sample_ci_upper, "]",
+                          "\nP-value = ", sample_pval)
+
+# Rename "control_control" to "controls" and "sample_sample" to "Case"
+plot_df$Group <- gsub("control_control", "Control", plot_df$Group)
+plot_df$Group <- gsub("sample_sample", "Case", plot_df$Group)
+
+  
+ggplot(plot_df, aes(x = expr, y = meth)) +
+  
+  # Scatter points with respective group colors
+  geom_point(aes(fill = Group), shape = 21, size = 4, color = "black", alpha = 0.8) +  
+
+  # Overall regression line (for all data points) - solid black
+  geom_smooth(method = "lm", formula = y ~ x, se = TRUE, color = "black", linetype = "solid") +  
+
+  # Regression line for Controls - dashed red
+  geom_smooth(data = subset(plot_df, Group == "Control"), method = "lm", formula = y ~ x, 
+              aes(fill = Group), se = TRUE, color = "red", fill = "#F8766D", linetype = "dashed") +  
+
+  # Regression line for Samples - dashed blue
+  geom_smooth(data = subset(plot_df, Group == "Case"), method = "lm", formula = y ~ x, 
+              aes(fill = Group), se = TRUE, color = "blue", fill = "#00BFC4", linetype = "dashed") +  
+ # Regression line
+  theme_bw() +
+  xlab(expression(paste("Log2 Gene expression"))) +  
+  ylab("median β-value of DMR") +
+  ggtitle(paste("Correlation Plot for Gene: HLA-DRB5 (", gene_name, ")" )) +  
+
+  # Main correlation annotation (top-right)
+  annotate("text", x = min(plot_df$expr) , y = max(plot_df$meth) * 0.6,
+           label = cor_text, hjust = 0, size = 3, fontface = "bold", color = "black") +  
+
+  # Control-specific annotation (bottom-left)
+  annotate("text", x = min(plot_df$expr), y = max(plot_df$meth) * 0.3, 
+           label = control_cor_text, hjust = 0, size = 3, fontface = "bold", color = "red") +  
+
+  # Sample-specific annotation (middle-left)
+  annotate("text", x = min(plot_df$expr), y = max(plot_df$meth) * 0.1 ,
+           label = sample_cor_text, hjust = 0, size = 3, fontface = "bold", color = "#00BFC4") +  
+
+  scale_fill_manual(values = c("Control" = "#F8766D", "Case" = "#00BFC4",
+                               "control_sample" = "#C77CFF", "sample_control" = "#7CAE00")) +  # Custom colors for group combinations
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    axis.title = element_text(size = 14, face = "bold"),
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12),
+    legend.position = "right"
+  )
+
+# Save the updated plot
+# Save the updated plot
+ggsave(file.path(plots_dir, "HLA-DRB5(ENSG00000198502)_correlationplot.png"), dpi = 600, width = 10, height = 6)
+
+```
+
+################
+
+Gene : SLC39A4(ENSG00000147804), index = 7412
+full_data -0.607221989	-0.727821952	-0.417571111  0.001
+controls -0.539435241	-0.730900721	-0.253520744	3	0.001
+samples -0.704320697	-0.871014967	-0.396835306	3	0.001
+
+
+```{r Final Plot FOR SLC39A4(ENSG00000258484) > with manual stats for main and intracalss eqtm, echo=FALSE}
+
+# Load required libraries
+library(ggplot2)
+
+# Define the specific index (character format)
+#index <- "33"
+index = "7412"  #SLC39A4
+
+# Extract the corresponding gene name
+gene_name <- rowData(eqtm.hg19.ckd$dmrs_se)$geneid[rowData(eqtm.hg19.ckd$dmrs_se)$index == index]
+
+
+# Find the correct row index based on the extracted index
+matched_index <- which(rowData(eqtm.hg19.ckd$dmrs_se)$index == index)
+
+# Extract expression & methylation values
+expr_values <- as.vector(assays(eqtm.hg19.ckd$dmrs_se)$expr[matched_index, ])
+meth_values <- as.vector(assays(eqtm.hg19.ckd$dmrs_se)$meth_summarized[matched_index, ])
+
+# **Manually define correlation statistics**
+# --- Main dataset (overall) ---
+cor_coef <- -0.607
+ci_lower <- -0.727
+ci_upper <- -0.417
+pval <- 0.001
+
+# --- Controls only ---
+control_cor_coef <- -0.539
+control_ci_lower <- -0.730
+control_ci_upper <- -0.253
+control_pval <- 0.001
+
+# --- Samples only ---
+sample_cor_coef <- -0.704
+sample_ci_lower <- -0.871
+sample_ci_upper <--0.396
+sample_pval <- 0.001
+
+# Create dataframe for plotting
+plot_df <- data.frame(
+  expr = log2(expr_values + 1),  # Log2-transform expression values
+  meth = meth_values,
+  Sample = colnames(eqtm.hg19.ckd$dmrs_se),
+  Group = united_groups  # Use the precomputed sample/control groups
+)
+
+# Define correlation annotation text (overall)
+cor_text <- paste0( 
+                   "\nOverall: r = ", cor_coef, 
+                   "\n95% CI: [", ci_lower, ", ", ci_upper, "]",
+                   "\nP-value = ", pval)
+
+# Define correlation annotation for control group only
+control_cor_text <- paste0("controls: r = ", control_cor_coef, 
+                           "\n95% CI: [", control_ci_lower, ", ", control_ci_upper, "]",
+                           "\nP-value = ", control_pval)
+
+# Define correlation annotation for sample group only
+sample_cor_text <- paste0("case: r = ", sample_cor_coef, 
+                          "\n95% CI: [", sample_ci_lower, ", ", sample_ci_upper, "]",
+                          "\nP-value = ", sample_pval)
+
+# Rename "control_control" to "controls" and "sample_sample" to "Case"
+plot_df$Group <- gsub("control_control", "Control", plot_df$Group)
+plot_df$Group <- gsub("sample_sample", "Case", plot_df$Group)
+
+  
+ggplot(plot_df, aes(x = expr, y = meth)) +
+  
+  # Scatter points with respective group colors
+  geom_point(aes(fill = Group), shape = 21, size = 4, color = "black", alpha = 0.8) +  
+
+  # Overall regression line (for all data points) - solid black
+  geom_smooth(method = "lm", formula = y ~ x, se = TRUE, color = "black", linetype = "solid") +  
+
+  # Regression line for Controls - dashed red
+  geom_smooth(data = subset(plot_df, Group == "Control"), method = "lm", formula = y ~ x, 
+              aes(fill = Group), se = TRUE, color = "red", fill = "#F8766D", linetype = "dashed") +  
+
+  # Regression line for Samples - dashed blue
+  geom_smooth(data = subset(plot_df, Group == "Case"), method = "lm", formula = y ~ x, 
+              aes(fill = Group), se = TRUE, color = "blue", fill = "#00BFC4", linetype = "dashed") +  
+ # Regression line
+  theme_bw() +
+  xlab(expression(paste("Log2 Gene expression"))) +  
+  ylab("median β-value of DMR") +
+  ggtitle(paste("Correlation Plot for Gene: SLC39A4(", gene_name, ")")) +  
+
+  # Main correlation annotation (top-right)
+  annotate("text", x = min(plot_df$expr) , y = max(plot_df$meth) * 0.6,
+           label = cor_text, hjust = 0, size = 3, fontface = "bold", color = "black") +  
+
+  # Control-specific annotation (bottom-left)
+  annotate("text", x = min(plot_df$expr), y = max(plot_df$meth) * 0.4, 
+           label = control_cor_text, hjust = 0, size = 3, fontface = "bold", color = "red") +  
+
+  # Sample-specific annotation (middle-left)
+  annotate("text", x = min(plot_df$expr), y = max(plot_df$meth) * 0.2 ,
+           label = sample_cor_text, hjust = 0, size = 3, fontface = "bold", color = "#00BFC4") +  
+
+  scale_fill_manual(values = c("Control" = "#F8766D", "Case" = "#00BFC4",
+                               "control_sample" = "#C77CFF", "sample_control" = "#7CAE00")) +  # Custom colors for group combinations
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    axis.title = element_text(size = 14, face = "bold"),
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12),
+    legend.position = "right"
+  )
+
+# Save the updated plot
+# Save the updated plot
+ggsave(file.path(plots_dir, "SLC39A4(ENSG00000258484)_correlationplot.png"), dpi = 600, width = 10, height = 6)
+
+```
+
+Gene > PCDHB9 (r = 0.51) (ENSG00000177839), index = 4150
+
+Full data 0.511203328	0.198277745	0.789465836	0.004
+controls > 0.545892686	0.016111567	0.896154497	4	0.005
+samples 0.622971323	0.162448723	0.899972741	4	0.011
+
+
+
+```{r Final Plot FOR PCDHB9(ENSG00000177839) > with manual stats for main and intracalss eqtm, echo=FALSE}
+
+# Load required libraries
+library(ggplot2)
+
+# Define the specific index (character format)
+#index <- "33"
+index = "4150"  #PCDHB9
+
+# Extract the corresponding gene name
+gene_name <- rowData(eqtm.hg19.ckd$dmrs_se)$geneid[rowData(eqtm.hg19.ckd$dmrs_se)$index == index]
+
+
+# Find the correct row index based on the extracted index
+matched_index <- which(rowData(eqtm.hg19.ckd$dmrs_se)$index == index)
+
+# Extract expression & methylation values
+expr_values <- as.vector(assays(eqtm.hg19.ckd$dmrs_se)$expr[matched_index, ])
+meth_values <- as.vector(assays(eqtm.hg19.ckd$dmrs_se)$meth_summarized[matched_index, ])
+
+# **Manually define correlation statistics**
+# --- Main dataset (overall) ---
+cor_coef <- 0.511
+ci_lower <- 0.198
+ci_upper <- 0.789
+pval <- 0.004
+
+# --- Controls only ---
+control_cor_coef <- 0.545
+control_ci_lower <- 0.016
+control_ci_upper <- 0.896
+control_pval <- 0.005
+
+# --- Samples only ---
+sample_cor_coef <- 0.622
+sample_ci_lower <- 0.162
+sample_ci_upper <- 0.899
+sample_pval <- 0.011
+
+# Create dataframe for plotting
+plot_df <- data.frame(
+  expr = log2(expr_values + 1.1),  # Log2-transform expression values
+  meth = meth_values,
+  Sample = colnames(eqtm.hg19.ckd$dmrs_se),
+  Group = united_groups  # Use the precomputed sample/control groups
+)
+
+# Define correlation annotation text (overall)
+cor_text <- paste0( 
+                   "\nOverall: r = ", cor_coef, 
+                   "\n95% CI: [", ci_lower, ", ", ci_upper, "]",
+                   "\nP-value = ", pval)
+
+# Define correlation annotation for control group only
+control_cor_text <- paste0("controls: r = ", control_cor_coef, 
+                           "\n95% CI: [", control_ci_lower, ", ", control_ci_upper, "]",
+                           "\nP-value = ", control_pval)
+
+# Define correlation annotation for sample group only
+sample_cor_text <- paste0("case: r = ", sample_cor_coef, 
+                          "\n95% CI: [", sample_ci_lower, ", ", sample_ci_upper, "]",
+                          "\nP-value = ", sample_pval)
+
+# Rename "control_control" to "controls" and "sample_sample" to "Case"
+plot_df$Group <- gsub("control_control", "Control", plot_df$Group)
+plot_df$Group <- gsub("sample_sample", "Case", plot_df$Group)
+
+  
+ggplot(plot_df, aes(x = expr, y = meth)) +
+  
+  # Scatter points with respective group colors
+  geom_point(aes(fill = Group), shape = 21, size = 4, color = "black", alpha = 0.8) +  
+
+  # Overall regression line (for all data points) - solid black
+  geom_smooth(method = "lm", formula = y ~ x, se = TRUE, color = "black", linetype = "solid") +  
+
+  # Regression line for Controls - dashed red
+  geom_smooth(data = subset(plot_df, Group == "Control"), method = "lm", formula = y ~ x, 
+              aes(fill = Group), se = TRUE, color = "red", fill = "#F8766D", linetype = "dashed") +  
+
+  # Regression line for Samples - dashed blue
+  geom_smooth(data = subset(plot_df, Group == "Case"), method = "lm", formula = y ~ x, 
+              aes(fill = Group), se = TRUE, color = "blue", fill = "#00BFC4", linetype = "dashed") +  
+ # Regression line
+  theme_bw() +
+  xlab(expression(paste("Log2 Gene expression"))) +  
+  ylab("median β-value of DMR") +
+  ggtitle(paste("Correlation Plot for Gene: PCDHB9", gene_name, ")")) +  
+
+  # Main correlation annotation (top-right)
+  annotate("text", x = min(plot_df$expr) , y = max(plot_df$meth) * 0.45,
+           label = cor_text, hjust = 0, size = 3, fontface = "bold", color = "black") +  
+
+  # Control-specific annotation (bottom-left)
+  annotate("text", x = min(plot_df$expr), y = max(plot_df$meth) * 0.35, 
+           label = control_cor_text, hjust = 0, size = 3, fontface = "bold", color = "red") +  
+
+  # Sample-specific annotation (middle-left)
+  annotate("text", x = min(plot_df$expr), y = max(plot_df$meth) * 0.25 ,
+           label = sample_cor_text, hjust = 0, size = 3, fontface = "bold", color = "#00BFC4") +  
+
+  scale_fill_manual(values = c("Control" = "#F8766D", "Case" = "#00BFC4",
+                               "control_sample" = "#C77CFF", "sample_control" = "#7CAE00")) +  # Custom colors for group combinations
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    axis.title = element_text(size = 14, face = "bold"),
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12),
+    legend.position = "right"
+  )
+
+# Save the updated plot
+ggsave(file.path(plots_dir, "PCDHB9(ENSG00000177839)_correlationplot.png"), dpi = 600, width = 10, height = 6)
+
+```
+

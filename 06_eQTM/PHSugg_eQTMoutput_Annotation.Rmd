@@ -1,0 +1,149 @@
+---
+title: "Output_eQTM_annotation.Rmd"
+output: html_document
+date: "2025-02-18"
+Author > Manasa Kalya 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+# GitHub-ready relative paths. Run this script from the repository root.
+project_dir <- getwd()
+input_dir <- file.path(project_dir, "input")
+output_dir <- file.path(project_dir, "output")
+plots_dir <- file.path(output_dir, "plots")
+functions_dir <- file.path(project_dir, "functions")
+
+dir.create(input_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(plots_dir, showWarnings = FALSE, recursive = TRUE)
+
+# All packages and libraries sit here: 
+# Optional: set a custom library path here if needed.
+
+
+```
+
+## 
+From the eQTM pipeline, we have Ensembl geneids correlated to specific DMRS *based on DMR chromosomal location* , corresponding Correlation coefficient, Confidence interval and p_values. 
+
+Now, this snippet works on adding annotation to these genes and DMRS as > 
+a. Whether DMR sits in Promoter of the gene 
+b. In the genebody 
+c. In the exon 
+d. Far away enhancer / based on ENCODE project
+
+```{r load necessary libraries, include=FALSE}
+
+library(GenomicRanges)
+library(rtracklayer)
+#library(ChIPseeker)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)  # Change to hg38 if needed
+#BiocManager::install("txdbmaker")
+library(txdbmaker)
+# BiocManager::install("ChIPseeker")
+library(ChIPseeker)
+
+library(ggtree) # needed for ChIPseeker
+# setwd() removed for GitHub release; run from repository root.
+```
+
+
+
+```{r read eQTM output}
+
+dmr_df <- read.csv(file.path(output_dir, "output_eqtm_CKD_binary.csv"))
+
+head(dmr_df)
+```
+
+## Including Chromosomal location for genes *hg19
+
+For Differentially Methylated Region (DMR) annotation, the most biologically relevant features are:
+
+Feature	Why Included?
+1. Gene	Defines the entire transcriptional unit (useful for gene-body methylation).
+2. Exon	Identifies if a DMR is within coding/non-coding sequences.
+3. Promoter	Defined as 2kb upstream of the Transcription Start Site (TSS), crucial for gene regulation.
+
+# Why Were Other GTF Features Excluded?
+
+1. Transcript	Too redundant. A single gene can have multiple transcripts, making annotation noisy.
+2. CDS (Coding Sequence)	Less relevant because methylation primarily affects transcription, not translation.
+3. UTR (Untranslated Regions)	Optional. UTRs regulate translation but are not primary methylation targets.
+4. Start_Codon / Stop_Codon	Too localized. Methylation changes are usually broad rather than codon-specific.
+
+Selenocysteine	Extremely rare and specific to certain tRNA pathways, not relevant for general DMR annotation.
+
+###########################
+
+Let us subset / Gene, Exon, promoter, CDS , S
+
+```{r Annotation, echo=FALSE}
+
+# Convert DMR data to GRanges object
+dmr_gr <- GRanges(seqnames = dmr_df$seqnames,
+                  ranges = IRanges(start = dmr_df$start, end = dmr_df$end), 
+                  geneid = dmr_df$geneid, ncps = dmr_df$nCpGs, cor_coef = dmr_df$cor_coef, 
+                  CI95_lower = dmr_df$CI95_lower, CI95_upper = dmr_df$CI95_upper, cor_pvalue = dmr_df$pvals)
+
+# Load Gene Annotation (GTF file)
+gtf_file <- file.path(input_dir, "gencode.v19.annotation.gtf")  # Change to your GTF file
+gtf_data <- import(gtf_file)
+
+# Extract relevant gene features from GTF
+gene_regions <- subset(gtf_data, type == "gene")
+transcript_regions <- subset(gtf_data, type == "transcript")
+exon_regions <- subset(gtf_data, type == "exon")
+cds_regions <- subset(gtf_data, type == "CDS")
+utr_regions <- subset(gtf_data, type == "UTR")
+start_codon_regions <- subset(gtf_data, type == "start_codon")
+stop_codon_regions <- subset(gtf_data, type == "stop_codon")
+selenocysteine_regions <- subset(gtf_data, type == "Selenocysteine")  # Rare but included
+
+#  Define introns properly using GenomicFeatures**
+txdb <- makeTxDbFromGFF(gtf_file)  # Convert GTF to TxDb format
+introns_by_tx <- intronsByTranscript(txdb, use.names = TRUE)  # Extract introns
+intron_regions <- unlist(introns_by_tx)  # Convert list to GRanges
+
+# Define promoter regions (2kb upstream of TSS)
+promoter_regions <- promoters(gene_regions, upstream = 2000, downstream = 500)
+
+# Combine all feature annotations
+all_features <- c(gene_regions, transcript_regions, exon_regions, intron_regions, 
+                  cds_regions, utr_regions, start_codon_regions, stop_codon_regions, 
+                  selenocysteine_regions, promoter_regions)
+
+seqlevelsStyle(dmr_gr) <- "UCSC"  # Converts to "chr1" format
+seqlevelsStyle(txdb) <- "UCSC"  # Ensure TxDb matches "chr1" format
+
+# Extract gene names from the GTF data
+gene_info <- data.frame(
+  geneid = gene_regions$gene_id,  # Extract gene ID
+  gene_name = gene_regions$gene_name  # Extract gene name
+)
+
+gene_info$geneid <- sub("\\..*", "", gene_info$geneid)   #remove verson numbers
+
+
+# Annotate DMRs using ChIPseeker
+txdb <- TxDb.Hsapiens.UCSC.hg19.knownGene  # Adjust to hg38 if needed
+dmr_annotation <- annotatePeak(dmr_gr, TxDb = txdb, tssRegion = c(-2000, 500))
+
+# Convert annotation results to a data frame
+annotated_dmr_df <- as.data.frame(dmr_annotation)
+
+# Merge gene names into the annotation results
+annotated_dmr_df <- merge(annotated_dmr_df, gene_info, by = "geneid", all.x = TRUE)
+
+# Save annotated results
+write.csv(annotated_dmr_df, file.path(output_dir, "output_eQTMoutput_annotations_CKD.csv"), row.names = FALSE)
+
+# Print completion message
+print("DMR annotation completed!")
+
+```
+
+

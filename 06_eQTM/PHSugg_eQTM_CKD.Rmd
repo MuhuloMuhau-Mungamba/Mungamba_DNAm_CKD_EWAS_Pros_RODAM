@@ -1,0 +1,464 @@
+---
+title: "RODAM_eqtm"
+output: html_document
+date: "22-7-2025"
+Author : Manasa Kalya 
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# GitHub-ready relative paths. Run this script from the repository root.
+project_dir <- getwd()
+input_dir <- file.path(project_dir, "input")
+output_dir <- file.path(project_dir, "output")
+plots_dir <- file.path(output_dir, "plots")
+functions_dir <- file.path(project_dir, "functions")
+
+dir.create(input_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(plots_dir, showWarnings = FALSE, recursive = TRUE)
+
+```
+
+## R Markdown
+
+
+```{r Libraries, include=FALSE}
+library(dplyr)
+library(GenomicRanges)
+library(data.table)
+library(tidyverse)
+library(readr)
+library(foreach)
+# setwd() removed for GitHub release; run from repository root.
+```
+
+
+
+
+```{r load sample_info file, include=FALSE}
+
+## C. Matching sample_names between Beta_matrix and GEX_matrix 
+
+all_meta <- read.csv(file.path(input_dir, "2025.09.29.RNA_CKD_Muhau_Pheno_Timepoint2.csv"))
+
+meta_no_duplicates <- all_meta[!duplicated(all_meta$RodamID), ] # Check/remove duplicates if any
+meta_no_duplicates <- meta_no_duplicates %>% remove_rownames %>% column_to_rownames(var="R2_RNA_number")
+meta_no_duplicates$R2_RNA_number <- rownames(meta_no_duplicates)
+
+# Create a named vector mapping 'Basename' to 'R2_RNA_number'
+basename_to_rna <- setNames(meta_no_duplicates$R2_RNA_number, meta_no_duplicates$Basename.x)
+
+# Check the mapping
+head(basename_to_rna)
+
+# setwd("<project-relative-path>")
+```
+
+
+## eQTM Analysis
+
+This function was setup to perform an expression quantitative trait methylation analysis for methylation and gene expression data obtained from the same samples.
+# 1.' @param dmrs_gr A GenomicRanges-derived object where the ranges represent the coordinates of the DMR and whose metadata contains an associated gene identifier.
+# 2. ' @param gene_col A column index containing of the dmrs_gr object containing the gene identifiers.
+# 3. ' @param meth_data A matrix whose row names contain CpG identifiers and whose values represent the methylation signal. The column names must contain the columns names of the gene expression data.
+# 4. ' @param expr_data A matrix whose row names contain gene identifiers and whose values represent the expression signal. The column names must contain the columns names of the methylation data.
+# 5. ' @param meth_anno_gr A GenomicRanges-derived object where the ranges represent the coordinates of the assayed CpGs and whose rownames contain an identifier.
+
+This is to process and align epr_data for further analysis: 
+There are 2 low-quality RNA-seq samples, which I will be excluding additionally., 
+According to RNA-seq FastQ QC, there are 2 samples that are poor and we have decided to remove them from the analysis. 
+G2155 & P0874.
+
+```{r liftedover_GEX_data , include=FALSE}
+
+expr_matrix <- fread(file.path(input_dir, "input_hg19_filteredNormalized_GEX_touse.csv"))
+#dim(expr_matrix) 
+expr_matrix$V1 <- NULL
+
+expr_matrix <- as.data.frame(expr_matrix)
+
+rownames(expr_matrix) <- expr_matrix$hg19_ensembl_id
+
+expr_matrix$hg19_ensembl_id <- NULL
+
+# setwd("<project-relative-path>")
+
+
+# check for duplicated gene IDs in your expression matrix
+# Check how many duplicated gene IDs (row names)
+# Remove digits and the period after it from rownames of expr_data
+rownames(expr_matrix) <- sub("\\..*", "", rownames(expr_matrix))
+
+
+#sanity
+sum(duplicated(rownames(expr_matrix)))
+duplicated_genes <- rownames(expr_matrix)[duplicated(rownames(expr_matrix))]
+
+
+# additional column for eqtm 
+# expr_matrix$geneid <- rownames(expr_matrix)  # Add geneid column from rownames
+
+# Check if expr_data is numeric 
+
+```
+
+
+
+```{r @param 1: load meth_data matrix, echo=FALSE}
+
+#beta_matrix <- fread("<project-relative-path>")
+
+beta_matrix <- fread(file.path(input_dir, "betaFunnurm.txt"))
+beta_matrix <- as.data.frame(beta_matrix)
+rownames(beta_matrix) <-beta_matrix$V1
+beta_matrix$V1 <- NULL
+  
+```
+
+
+```{r @param 1: processing beta_matrix further to match expr_data, echo=FALSE}
+
+# Replace the column names of beta_matrix with the corresponding R2_RNA_number
+colnames(beta_matrix) <- basename_to_rna[colnames(beta_matrix)]
+
+# subset beta_matrix which have R2_RNA_Number in all_meta
+beta_matrix_2 <- beta_matrix[, !is.na(colnames(beta_matrix))]
+
+# Check the new column names in beta_matrix_2
+head(colnames(beta_matrix_2))
+  
+
+############################################################################
+## Subset beta_matrix 
+
+beta_matrix_2 <- beta_matrix_2[, !is.na(colnames(beta_matrix_2))] # cpg Identifier column
+
+# Find the common columns between beta_matrix_2 and expr_data
+common_columns <- intersect(colnames(beta_matrix_2), colnames(expr_matrix))
+# Check the common columns
+common_columns
+
+# Subset beta_matrix_2 to only include the common columns
+beta_matrix_2_subset <- beta_matrix_2[, common_columns]
+expr_matrix <- expr_matrix[,common_columns]
+beta_matrix_2_subset$probeID <- NULL
+
+# Check the result
+head(beta_matrix_2_subset)
+
+# Reorder columns in expr_data and beta_matrix_2 to match each other
+
+# Check if both dataframes have the same column names
+all(colnames(expr_matrix) %in% colnames(beta_matrix_2_subset))  # Should return TRUE
+all(colnames(beta_matrix_2_subset) %in% colnames(expr_matrix))  # Should return TRUE
+
+# Reorder columns of expr_matrix_aggregated_df to match the order of columns in beta_matrix_2
+expr_matrix <- expr_matrix[, colnames(beta_matrix_2_subset)]
+
+# Check if the column names of both dataframes are now the same
+all(colnames(expr_matrix) == colnames(beta_matrix_2_subset))  # Should return TRUE
+
+# expr_matrix <- as.data.frame(expr_matrix)
+
+# Remove digits and the period after it from rownames of expr_data
+#rownames(expr_matrix) <- sub("\\..*", "", rownames(expr_matrix))
+
+```
+- Annotation file should be placed in the `input/` directory.
+
+
+```{r @param 3: @param meth_anno_gr, Genomic ranges, echo=FALSE}
+
+annotation_data <- fread(file.path(input_dir, "filteredAnnotation.txt"))
+
+annotation_data = as.data.frame(annotation_data)
+colnames(annotation_data)
+rownames(annotation_data) <- annotation_data$V1
+
+# Extract relevant columns from annotation_data
+cpg_annotation <- annotation_data[, c("chr", "pos", "Name")]
+head(cpg_annotation)
+# Extract relevant columns from annotation_data
+cpg_annotation <- annotation_data[, c("chr", "pos", "Name")]
+head(cpg_annotation)
+
+# Make sure the row names of beta_matrix match the 'Name' column in annotation_data
+# The row names of your beta matrix represent the CpG probe IDs
+# Merge the annotation with the beta matrix by matching probe IDs
+
+# Add rownames as a column for both data frames
+cpg_annotation$probeID <- rownames(cpg_annotation)
+
+#beta_matrix_2_subset_df <- data.frame(probeID = rownames(beta_matrix_2_subset), 
+                                     #beta_values = as.vector(as.numericbeta_matrix_2_subset))
+
+beta_matrix_2_subset$probeID <- rownames(beta_matrix_2_subset) # temporary column
+
+# Merge on 'probeID' after adding rownames as a column
+cpg_data <- merge(cpg_annotation, 
+                  as.data.frame(beta_matrix_2_subset), 
+                  by.x = "probeID", 
+                  by.y = "probeID", 
+                  all.x = FALSE)
+
+cpg_data$probeID <- NULL # Optionally, remove the 'probeID' column if no longer needed after merge
+
+dim(cpg_data) # Check the dimensions of the merged data
+
+
+# Check the merged data
+head(cpg_data)
+# colnames(cpg_data) <- gsub("beta_values\\.", "", colnames(cpg_data))
+
+rownames(cpg_data) <- cpg_data$Name
+
+## STEP 2: Converting to Genomic Ranges 
+
+meth_anno_gr <- GRanges(
+  seqnames = cpg_data$chr,  # Chromosome
+  ranges = IRanges(start = cpg_data$pos, end = cpg_data$pos),  # Position (start == end for each CpG site)
+  probeID = cpg_data$Name,  # Probe ID
+  beta_values = cpg_data[, grep("beta", colnames(cpg_data))]  # Beta values (assuming columns contain beta values)
+)
+
+# Set the 'names' of the GRanges object to match the rownames of cpg_data
+names(meth_anno_gr) <- rownames(cpg_data)
+
+# Check the names of meth_anno_gr
+names(meth_anno_gr)
+
+```
+
+
+
+
+```{r @param 1: load DMR data , echo=FALSE}
+
+df = read.csv(file.path(output_dir, "input_2MBpreprocessed_dmr_geneoverlaps.csv"), header = TRUE) 
+
+
+# Remove digits and the period after it from rownames of expr_data
+df$gene_id <- sub("\\..*", "", df$gene_id)
+
+# # Rename specific columns in dmr_df
+# colnames(dmr_overlaps_full)[colnames(dmr_overlaps_full) == "dmr_start"] <- "dmr_extended_start"
+# colnames(dmr_overlaps_full)[colnames(dmr_overlaps_full) == "dmr_end"] <- "dmr_extended_end"
+# colnames(dmr_overlaps_full)[colnames(dmr_overlaps_full) == "start"] <- "dmr_start"
+# colnames(dmr_overlaps_full)[colnames(dmr_overlaps_full) == "end"] <- "dmr_end"
+
+# Verify the changes
+print(colnames(dmr_overlaps_full))
+
+# Count number of NA values in gene_id column
+#sum(is.na(df$gene_id))    #must be 0, otherwise, remove them
+# Assuming your data frame is named df
+# Remove version number from Ensembl IDs 
+#df$gene_id <- sub("\\.\\d+$", "", df$gene_id)
+
+# Assuming your data frame is named df
+# Convert the dataframe to a GRanges object
+ckd_dmrs <- GRanges(
+  seqnames = df$dmr_chr,  # Chromosome
+  ranges = IRanges(start = df$dmr_start, end = df$dmr_end),  # Genomic ranges (start and end positions)
+  value = df$value,  # Example of additional data (value)
+  area = df$area,  # Additional column (area)
+  cluster = df$cluster,  # Additional column (cluster)
+  indexStart = df$indexStart,  # Example metadata
+  indexEnd = df$indexEnd,
+  L = df$L,
+  clusterL = df$clusterL,
+  pvalue = df$p.value,  # P-values as metadata
+  fwer = df$fwer,
+  pvalueArea = df$p.valueArea,
+  fwerArea = df$fwerArea,
+  Gene_start = df$gene_start,  # Gene start position
+  Gene_end = df$gene_end, 
+  Gene_name = df$gene_name, # Gene end position
+  geneid =  df$gene_id     # Gene name
+)
+
+# Check the resulting GenomicRanges object
+head(ckd_dmrs)
+
+```
+
+1. Error in if (const(t, min(1e-08, mean(t, na.rm = TRUE)/1e+06))) { : 
+  missing value where TRUE/FALSE needed - 
+
+
+```{r @param filtering GEX for low SD  , echo=FALSE}
+
+# # Assuming expr_matrix is your original expression matrix
+# # Number of samples (columns)
+# num_samples <- ncol(expr_matrix)
+# 
+# # Define the threshold for zero values and low standard deviation
+# zero_threshold <- 0.8 * num_samples  # 80% of samples
+# sd_threshold <- 0.1  # Standard deviation threshold, adjust as needed
+# 
+# # Step 1: Identify rows with 80% or more zero values
+# rows_with_zeros <- apply(expr_matrix, 1, function(x) sum(x == 0)) >= zero_threshold
+# 
+# # Step 2: Identify rows with low standard deviation
+# rows_with_low_sd <- apply(expr_matrix, 1, sd) <= sd_threshold
+# 
+# # Step 3: Combine the conditions to filter rows
+# rows_to_remove <- rows_with_zeros | rows_with_low_sd
+# 
+# # Step 4: Subset the expression matrix
+# filtered_expr_matrix <- expr_matrix[!rows_to_remove, ]
+# 
+# # Remove duplicate row names, keeping only the first occurrence
+# filtered_expr_matrix <- filtered_expr_matrix[!duplicated(rownames(filtered_expr_matrix)), ]
+# 
+# # View the filtered expression matrix
+# dim(filtered_expr_matrix)
+# 
+# filtered_expr_matrix_2 <- filtered_expr_matrix[, apply(filtered_expr_matrix, 2, var) > 1]
+
+
+
+
+# Load the matrices
+#exp_matrix <- read.csv("exp_matrix.csv", row.names = 1)
+#beta_matrix <- read.csv("beta_matrix.csv", row.names = 1)
+beta_matrix_2_subset$probeID <- NULL
+
+# # Check for constant rows (zero standard deviation)
+# constant_rows_expr <- apply(expr_matrix, 1, function(x) sd(x, na.rm = TRUE) == 0)
+# constant_rows_meth <- apply(beta_matrix_2_subset, 1, function(x) sd(x, na.rm = TRUE) == 0)
+# 
+# # Report how many rows have constant values
+# sum(constant_rows_expr)  # Genes with no variation in expression
+# sum(constant_rows_meth)  # CpGs with no variation in methylation
+# 
+# expr_matrix <- expr_matrix[!constant_rows_expr, ]
+# beta_matrix <- beta_matrix_2_subset[!constant_rows_meth, ]
+
+sum(is.na(expr_matrix))
+sum(is.na(beta_matrix_2_subset))
+
+```
+
+
+
+```{r @param : junk_2 : flow variance rows  , echo=FALSE}
+
+# # Check for constant or zero variance rows in methylation data
+# row_variances_meth <- apply(beta_matrix_2_subset, 1, var)
+# zero_variance_rows_meth <- which(row_variances_meth == 0)
+# 
+# # Check for constant or zero variance rows in expression data
+# row_variances_expr <- apply(filtered_expr_matrix, 1, var)
+# zero_variance_rows_expr <- which(row_variances_expr == 0)
+# 
+# # Print out any problematic rows
+# print(zero_variance_rows_meth)
+# print(zero_variance_rows_expr)
+
+```
+
+
+```{r eqtm function, echo=FALSE}
+
+#require("NDlib")
+#require(eqtm)
+
+#library(NDlib)
+
+source(file.path(functions_dir, "PHSugg_eQTM_functions_rodam.R"))
+
+library(SummarizedExperiment)
+library(foreach)
+library(parallel)
+
+
+# check for duplicated gene IDs in your expression matrix
+# Check how many duplicated gene IDs (row names)
+sum(duplicated(rownames(expr_matrix)))
+duplicated_genes <- rownames(expr_matrix)[duplicated(rownames(expr_matrix))]
+
+
+# 
+expr_matrix$geneid <- rownames(expr_matrix)  # Add geneid column from rownames
+
+# sanity checks
+#beta_matrix$probeID <- NULL # ensure this column is not there in final matrix
+
+# 1. Check if expr_matrix is numeric
+# expr_matrix[] <- lapply(expr_matrix, as.numeric)
+
+## 1. Check typeof beta, expr-data - must be dataframes
+typeof(expr_matrix)  #list   needs conversion
+typeof(beta_matrix_2_subset)   #list 
+
+## 2. Check dimensions, they must be same 
+dim(expr_matrix)
+dim(beta_matrix_2_subset)
+
+# 3. colnames must match 
+all(colnames(expr_matrix) == colnames(beta_matrix_2_subset)) # must be TRUE 
+
+# 4. Check overlapping geneids - dmr$geneids and rownames(expr_matrix)
+d <- expr_matrix[(rownames(expr_matrix) %in% df$gene_id),]
+print(dim(d))            #46 overlapping
+
+# 5. Ensure "geneid" is the column_name in rodam_dmrs object
+ckd_dmrs$geneid
+
+
+expr_matrix <- as.matrix(expr_matrix)
+beta_matrix <- as.matrix(beta_matrix_2_subset)
+
+
+#################################################################
+# Define the output directory
+output_dir <- "output"
+
+# Ensure the "output" directory exists
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+}
+
+# Define file paths inside "output" directory
+output_rdata_file <- file.path(output_dir, "output_eQTM_CKD_binary.RData")
+output_csv_file <- file.path(output_dir, "output_eqtm_CKD_binary.csv")
+
+
+# Run the eqtm function
+eqtm.hg19.ckd <- eqtm(
+  dmrs_gr = ckd_dmrs, 
+  gene_col = "geneid", 
+  meth_data = beta_matrix_2_subset, 
+  expr_data = expr_matrix, 
+  meth_anno_gr = meth_anno_gr, 
+  cor_method = "pearson", 
+  alternative = "two.sided", 
+  N = 1000, 
+  iseed = 531235, 
+  ncores = 4,
+  verbose = TRUE
+)
+
+save(eqtm.hg19.ckd, file = output_rdata_file)
+# write.csv(rowData(eqtm.hg19.deltaSBP), "PHSugg_output_eqtmhg19_deltaSBP.csv")
+
+g <- as.data.frame(eqtm.hg19.ckd$dmrs_chrom_df)
+new_colnames <- as.character(g["geneid", ])  # Extract the geneid row as a vector
+colnames(g) <- new_colnames
+
+# 4. Transpose the dataframe
+g_transposed <- t(g)
+g_transposed <- as.data.frame(g_transposed)
+
+# Print the updated g_transposed dataframe with overlapping DMRs
+head(g_transposed)
+
+write.csv(g_transposed,output_csv_file)
+
+
+```

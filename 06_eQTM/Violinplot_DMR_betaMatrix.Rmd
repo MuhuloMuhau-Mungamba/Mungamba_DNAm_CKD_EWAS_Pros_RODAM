@@ -1,0 +1,327 @@
+---
+title: "Barplot_betaMatrix.Rmd"
+output: html_document
+date: "2025-02-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# GitHub-ready relative paths. Run this script from the repository root.
+project_dir <- getwd()
+input_dir <- file.path(project_dir, "input")
+output_dir <- file.path(project_dir, "output")
+plots_dir <- file.path(output_dir, "plots")
+functions_dir <- file.path(project_dir, "functions")
+
+dir.create(input_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(plots_dir, showWarnings = FALSE, recursive = TRUE)
+
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r Load libraries }
+
+# Load required libraries
+library(GenomicRanges)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+#start-rstudio.sh /net/beegfs/cfg/projects/EPI-res/lkgres/projects/
+# setwd() removed for GitHub release; run from repository root.
+```
+
+
+```{r read necessary files .. }
+
+#pheno info 
+
+all_meta <- read.table(file.path(input_dir, "20240408_ProsRODAM_EWAS_DeltaSBP-10mmHg_Pheno_FU_Gha_Bloodcells.txt"))
+  
+subset_meta <- read.csv(file.path(input_dir, "DEPhenofile_all.csv"))
+
+#samples to remove - low qc and no rna-seq data availability 
+expr_matrix <- fread(file.path(input_dir, "input_hg19_filteredNormalized_GEX_touse.csv"))
+expr_matrix$V1 <- NULL
+expr_matrix <- as.data.frame(expr_matrix)
+rownames(expr_matrix) <- expr_matrix$hg19_ensembl_id
+expr_matrix$hg19_ensembl_id <- NULL
+expr_matrix$G2155 <- NULL
+expr_matrix$P0874 <- NULL
+
+subset_meta <- subset_meta[subset_meta$R2_RNA_number %in% colnames(expr_matrix),]
+print(dim(subset_meta))
+```
+
+## Including Plots
+chr1	110230269	110230456
+
+chr1	156616554	156616855
+
+
+```{r Define DMR Region for GSTM1.. }
+
+# Define the DMR region
+chr <- "chr1"  # Change this to your chromosome of interest
+start <- 110230269  # Change to your DMR start position
+end <- 110230456  # Change to your DMR end position
+
+dmr_region <- GRanges(seqnames = chr, ranges = IRanges(start = start, end = end))
+
+```
+
+
+```{r Define Annotation file .. }
+
+annotation <- fread(file.path(input_dir, "20241213_DeltaSBP10mmHg_FU_Gha_Annot_NoXY_NoSNP_NoCrosshyb.txt"))
+
+annotation = as.data.frame(annotation)
+
+# Make sure the row names of beta_matrix match the 'Name' column in annotation_data
+# The row names of your beta matrix represent the CpG probe IDs
+# Merge the annotation with the beta matrix by matching probe IDs
+
+# Add rownames as a column for both data frames
+
+
+# Convert annotation data to GRanges object
+cpg_gr <- GRanges(
+  seqnames = annotation$chr,
+  ranges = IRanges(start = annotation$pos, end = annotation$pos),
+  cpg_id = annotation$V1
+)
+
+```
+
+
+```{r Read beta_matrix .. }
+
+beta_matrix <-  fread(file.path(input_dir, "20241213_DeltaSBP10mmHg_FU_Gha_BetaFunnurm_NoSex_SNPs_NoCrosshybr.txt"))
+
+beta_matrix <- as.data.frame(beta_matrix)
+rownames(beta_matrix) <-beta_matrix$V1
+beta_matrix$V1 <- NULL
+
+
+beta_matrix_subset <- beta_matrix[, colnames(beta_matrix) %in% subset_meta$Basename]
+
+
+```
+
+
+```{r find overlaps .. }
+# Find overlaps between CpG sites and the DMR
+overlaps <- findOverlaps(cpg_gr, dmr_region)
+cpg_in_dmr <- annotation$V1[queryHits(overlaps)]  # Extract matching CpG IDs
+
+# Subset beta matrices for CpG sites in the DMR
+beta_matrix1_sub <- beta_matrix[rownames(beta_matrix) %in% cpg_in_dmr, , drop=FALSE]
+beta_matrix2_sub <- beta_matrix_subset[rownames(beta_matrix_subset) %in% cpg_in_dmr, , drop=FALSE]
+
+```
+
+
+
+```{r JUNK1, echo=FALSE}
+
+# Load required libraries
+library(ggplot2)
+library(patchwork)
+
+# Ensure `group_info` is correctly mapped to sample names
+group_info1 <- setNames(all_meta$R1R2_DeltaSBP_CaseControl, all_meta$Basename)
+group_info2 <- setNames(subset_meta$R1R2_DeltaSBP_CaseControl, subset_meta$Basename)
+
+# Function to compute mean beta values and generate a violin plot
+plot_violin_beta <- function(beta_matrix, matrix_name, group_info) {
+  # Compute mean beta values for each sample (column-wise mean)
+  mean_beta <- colMeans(beta_matrix, na.rm=TRUE)
+  
+  # Create a data frame
+  df <- data.frame(Sample=names(mean_beta), MeanBeta=mean_beta, Matrix=matrix_name)
+  
+  # Assign groups based on sample names in `group_info`
+  df$Group <- ifelse(df$Sample %in% names(group_info), as.character(group_info[df$Sample]), "Unknown")
+  
+  # Count the number of samples per group
+  sample_counts <- table(df$Group)
+  total_samples <- sum(sample_counts)
+  
+  # Create a text annotation dataframe
+  text_annotations <- data.frame(
+    Group = names(sample_counts),
+    MeanBeta = max(df$MeanBeta) + 0.02,  # Position text above violin plots
+    Label = paste0("n=", sample_counts)
+  )
+  
+  # Create violin plot with sample sizes
+  plot <- ggplot(df, aes(x=Group, y=MeanBeta, fill=Group)) +
+    geom_violin(trim=FALSE, alpha=0.6) +  # Violin plot
+    geom_boxplot(width=0.1, color="black", outlier.shape=NA) +  # Add boxplot inside
+    geom_text(data=text_annotations, aes(x=Group, y=MeanBeta, label=Label), size=5, vjust=-0.5) +  # Sample size annotation
+    theme_minimal() +
+    labs(
+      subtitle=paste(matrix_name, "- Total Samples:", total_samples),
+      x="Group", 
+      y="Mean Beta Value", 
+      fill="Group"
+    ) +
+    theme(legend.position="none")
+  
+  return(plot)
+}
+
+# Generate violin plots for both datasets
+plot1 <- plot_violin_beta(beta_matrix1_sub, "Complete Cohort of ΔSBP", group_info1)
+plot2 <- plot_violin_beta(beta_matrix2_sub, "Sub-Cohort of ΔSBP", group_info2)
+
+# Compute Wilcoxon Rank-Sum Test
+mean_beta1 <- colMeans(beta_matrix1_sub, na.rm=TRUE)
+mean_beta2 <- colMeans(beta_matrix2_sub, na.rm=TRUE)
+
+wilcox_test_result <- wilcox.test(mean_beta1, mean_beta2)
+
+# Combine plots and add a single title with Wilcoxon test p-value
+final_plot <- (plot1 + plot2) + 
+  plot_annotation(
+    title="Mean CpG Methylation in DMR (chr2:113992694-113993304) of ENSG00000125618",
+    subtitle="Complete Cohort vs. Sub-Cohort of ΔSBP",
+    caption=paste("Wilcoxon Test p-value:", round(wilcox_test_result$p.value, 4))
+  ) & 
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),  # Adjust title font size
+    plot.subtitle = element_text(size = 12),  # Adjust subtitle font size
+    plot.caption = element_text(size = 10, face = "italic")  # Adjust caption font size
+  )
+
+# Display the final plot
+print(final_plot)
+
+# Save the final plot
+ggsave(file.path(plots_dir, "DMR_violinplot_ENSG00000125618(PAX8).png"), dpi = 600, width = 10, height = 6)
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+```{r GSTM1 : Final DMR_barplot with Wilcox stats, echo=FALSE}
+
+# Load required libraries
+library(ggplot2)
+library(patchwork)
+
+# Ensure `group_info` is correctly mapped to sample names
+group_info1 <- setNames(all_meta$R1R2_DeltaSBP_CaseControl, all_meta$Basename)
+group_info2 <- setNames(subset_meta$R1R2_DeltaSBP_CaseControl, subset_meta$Basename)
+
+# Function to compute mean beta values and generate a violin plot
+plot_violin_beta <- function(beta_matrix, matrix_name, group_info) {
+  # Compute mean beta values for each sample (column-wise mean)
+  mean_beta <- colMeans(beta_matrix, na.rm=TRUE)
+  
+  # Create a data frame
+  df <- data.frame(Sample=names(mean_beta), MeanBeta=mean_beta, Matrix=matrix_name)
+  
+  # Assign groups based on sample names in `group_info`
+  #df$Group <- ifelse(df$Sample %in% names(group_info), as.character(group_info[df$Sample]), "Unknown")
+  df$Group <- factor(group_info[df$Sample], levels = c(0, 1), labels = c("Control", "Case"))
+
+  
+  # Count the number of samples per group
+  sample_counts <- table(df$Group)
+  total_samples <- sum(sample_counts)
+  
+  # Create a text annotation dataframe
+  text_annotations <- data.frame(
+    Group = names(sample_counts),
+    MeanBeta = max(df$MeanBeta) + 0.02,  # Position text above violin plots
+    Label = paste0("n=", sample_counts)
+  )
+  
+  # Create violin plot with sample sizes
+  plot <- ggplot(df, aes(x=Group, y=MeanBeta, fill=Group)) +
+    geom_violin(trim=FALSE, alpha=0.6) +  # Violin plot
+    geom_boxplot(width=0.1, color="black", outlier.shape=NA) +  # Add boxplot inside
+    geom_text(data=text_annotations, aes(x=Group, y=MeanBeta, label=Label), size=5, vjust=-0.5) +  # Sample size annotation
+    theme_minimal() +
+    labs(
+      subtitle=paste(matrix_name, "- Total Samples:", total_samples),
+      x="Group", 
+      y="Mean Beta Value", 
+      fill="Group"
+    ) +
+    scale_fill_manual(values = c("Control" = "#F8766D", "Case" = "#00BFC4")) +
+    
+    theme(legend.position="none")
+  
+  return(plot)
+}
+
+# Generate violin plots for both datasets
+plot1 <- plot_violin_beta(beta_matrix1_sub, "Complete Cohort of ΔSBP", group_info1)
+plot2 <- plot_violin_beta(beta_matrix2_sub, "Sub-Cohort of ΔSBP", group_info2)
+
+# Compute Mean Beta Values
+mean_beta1 <- colMeans(beta_matrix1_sub, na.rm=TRUE)
+mean_beta2 <- colMeans(beta_matrix2_sub, na.rm=TRUE)
+
+# Compute Wilcoxon Rank-Sum Test for all samples
+wilcox_all <- wilcox.test(mean_beta1, mean_beta2)
+
+# **(a) Wilcoxon Test: Control Group of Complete Cohort vs. Control of Sub-Cohort**
+control_samples1 <- names(group_info1[group_info1 == 0])  # Get control samples (Group 0) from Complete Cohort
+control_samples2 <- names(group_info2[group_info2 == 0])  # Get control samples (Group 0) from Sub-Cohort
+
+# Filter mean beta values for control groups only
+control_beta1 <- mean_beta1[control_samples1]
+control_beta2 <- mean_beta2[control_samples2]
+
+# Run Wilcoxon test on control groups
+wilcox_control <- wilcox.test(control_beta1, control_beta2)
+
+# **(b) Wilcoxon Test: Case Group of Complete Cohort vs. Case of Sub-Cohort**
+case_samples1 <- names(group_info1[group_info1 == 1])  # Get case samples (Group 1) from Complete Cohort
+case_samples2 <- names(group_info2[group_info2 == 1])  # Get case samples (Group 1) from Sub-Cohort
+
+# Filter mean beta values for case groups only
+case_beta1 <- mean_beta1[case_samples1]
+case_beta2 <- mean_beta2[case_samples2]
+
+# Run Wilcoxon test on case groups
+wilcox_case <- wilcox.test(case_beta1, case_beta2)
+
+# Combine plots and add a single title with Wilcoxon test p-values
+final_plot <- (plot1 + plot2) + 
+  plot_annotation(
+    title="Mean CpG Methylation in DMR (chr1:110230269-110230456) of GSTM1 (ENSG00000134184)",
+    subtitle="Complete Cohort vs. Sub-Cohort of ΔSBP",
+    caption=paste(
+      "Wilcoxon Test p-values:",
+      "\nComplete Cohort vs. Sub-Cohort:", round(wilcox_all$p.value, 4),
+      "\nControl Group Comparison:", round(wilcox_control$p.value, 4),
+      "\nCase Group Comparison:", round(wilcox_case$p.value, 4)
+    )
+  ) & 
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),  # Adjust title font size
+    plot.subtitle = element_text(size = 12),  # Adjust subtitle font size
+    plot.caption = element_text(size = 10, face = "italic")  # Adjust caption font size
+  )
+
+# Display the final plot
+print(final_plot)
+
+# Save the final plot
+output_dir <- file.path(plots_dir, "plots")
+output_file <- file.path(output_dir, "DMR_violinplot_ENSG00000134184(GSTM1).png")
+ggsave(output_file, plot = final_plot, dpi = 600, width = 12, height = 6)
+
+```

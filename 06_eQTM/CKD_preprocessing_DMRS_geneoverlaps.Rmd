@@ -1,0 +1,129 @@
+---
+title: "preprocessingDMRs.Rmd"
+date: "2025-02-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# GitHub-ready relative paths. Run this script from the repository root.
+project_dir <- getwd()
+input_dir <- file.path(project_dir, "input")
+output_dir <- file.path(project_dir, "output")
+plots_dir <- file.path(output_dir, "plots")
+functions_dir <- file.path(project_dir, "functions")
+
+dir.create(input_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(plots_dir, showWarnings = FALSE, recursive = TRUE)
+
+```
+
+## R Markdown
+
+This script is about: 
+The DMR data provided has DMR chromosomal location / seqnames, start and end.
+This column needs further processing and mapping to ensembl ids of hg19 assembly. 
+Region of interest is 2500bp on both endsof the dmr region and extracting genes in the extended area using hg19.gtf. 
+Then fetching corresponding gene ids
+
+PART 1: Preprocessing incidentHTN DMRs
+PART 2: Preprocessing deltaSBP DMRs
+
+```{r Libraries}
+
+library(tidyverse)
+library(GenomicFeatures)
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+
+#BiocManager::install("TxDb.Hsapiens.UCSC.hg19.knownGene")
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+# setwd() removed for GitHub release; run from repository root.
+```
+
+
+``` {r Reading the DMR data table}
+
+dmr_df <-  read.table(file.path(input_dir, "DMRS_CKD_T2_withT1_matchedcontrols_bumpscutoff_0.02_boots_500.txt"),sep = "\t",  header = TRUE) 
+
+# remove confusing/unwanted columns 
+dmr_df <- dmr_df[, !(colnames(dmr_df) %in% c("Gene_Name", "Gene_start", "Gene_end"))]
+ 
+```
+
+Extension to 
+2 megabases (Mb)
+
+```{r setup, include=FALSE}
+
+library(GenomicRanges)
+library(rtracklayer)
+
+# Load your DMR dataframe
+# dmr_df <- read.csv("dmr_file.csv")  # Replace with your actual file path
+# Assuming the DMR dataframe has columns: chr, start, end
+ 
+# Extend the DMR regions by 2500 bp on both sides
+dmr_df$start_extended <- pmax(0, dmr_df$start - 2000000)
+dmr_df$end_extended <- dmr_df$end + 2000000
+
+
+# Create a GenomicRanges object for DMRs with extended regions
+dmr_gr <- GRanges(seqnames = dmr_df$chr,
+                  ranges = IRanges(start = dmr_df$start_extended, end = dmr_df$end_extended))
+
+# Load the gene annotation file (GTF format for hg19)
+genes_gtf <- import(file.path(input_dir, "gencode.v19.annotation.gtf"))  # Replace with your actual file path
+
+# Filter for gene features (assuming 'gene' is the feature type in the GTF file)
+genes_gr <- genes_gtf[genes_gtf$type == "gene"]
+
+# Extract Ensembl Gene IDs (assumed to be in the "gene_id" column of the GTF file)
+# Ensembl gene IDs are typically in the "gene_id" attribute in the GTF file
+gene_ids <- mcols(genes_gr)$gene_id
+gene_names <- mcols(genes_gr)$gene_name
+
+# Find overlaps between the extended DMRs and genes
+overlap <- findOverlaps(dmr_gr, genes_gr)
+
+# Get the DMRs and genes that overlap
+dmr_overlaps <- data.frame(
+  dmr_chr = seqnames(dmr_gr)[queryHits(overlap)],
+  dmr_start = start(dmr_gr)[queryHits(overlap)],
+  dmr_end = end(dmr_gr)[queryHits(overlap)],
+  gene_chr = seqnames(genes_gr)[subjectHits(overlap)],
+  gene_start = start(genes_gr)[subjectHits(overlap)],
+  gene_end = end(genes_gr)[subjectHits(overlap)],
+  gene_name = gene_names[subjectHits(overlap)],
+  gene_id = gene_ids[subjectHits(overlap)]  # Extract Ensembl Gene ID
+)
+
+# Merge with the other columns from the original dmr_df (use queryHits to link DMR rows)
+# Merge with the other columns from the original dmr_df using all three columns: chr, start, and end
+dmr_overlaps$dmr_chr <- as.character(dmr_overlaps$dmr_chr)
+
+# Perform a left join using dplyr::left_join to have all other columns 
+dmr_overlaps_full <- dmr_overlaps %>%
+  left_join(dmr_df, by = c("dmr_chr" = "chr", "dmr_start" = "start_extended", "dmr_end" = "end_extended"))
+
+dmr_overlaps_full$chr <- dmr_overlaps_full$dmr_chr  # keeping a copy for dmr
+ 
+# Rename columns in the dataframe
+colnames(dmr_overlaps_full)[colnames(dmr_overlaps_full) == "dmr_start"] <- "dmr_extended_start"
+colnames(dmr_overlaps_full)[colnames(dmr_overlaps_full) == "dmr_end"] <- "dmr_extended_end"
+colnames(dmr_overlaps_full)[colnames(dmr_overlaps_full) == "start"] <- "dmr_start"
+colnames(dmr_overlaps_full)[colnames(dmr_overlaps_full) == "end"] <- "dmr_end"
+
+# Check the updated column names
+colnames(dmr_overlaps_full)
+
+                           
+# Optional: If you want to output to a CSV file
+write.csv(dmr_overlaps_full, file.path(output_dir, "input_2MBpreprocessed_dmr_geneoverlaps.csv"), row.names = FALSE)
+
+# View the result
+head(dmr_overlaps_full)
+
+```
