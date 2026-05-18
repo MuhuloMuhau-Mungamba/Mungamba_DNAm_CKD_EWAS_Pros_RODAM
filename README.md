@@ -7,7 +7,7 @@ This repository contains the full analysis pipeline supporting the manuscript:
 "Integrative analysis of genome-wide DNA methylation and Gene Expression profiles associated with incident chronic kidney disease: The longitudinal Pros-RODAM Cohort Study."
 
 AUTHORS
-Muhulo Muhau Mungamba1,2#, Andrea Venema3,4, Manasa Kalya Puroshothama3,4,5, Karlijn A.C. Meeks1,6, Felix. P Chilunga1, Eva L. van der Linden1, Charles F. Hayfron-Benjamin1,7,8, Constance R. Sewani-Rusike2, Liffert Vogt9, Bert-Jan van den Born1,7,Samuel N. Darko10,Ellis Owusu-Dabo11, Benedicta N. Nkeh-Chungag12, Charles Agyemang1,13* and Peter Henneman3,4,5*
+Muhulo Muhau Mungamba1,2#, Andrea Venema3,4, Manasa Kalya Puroshothama3,4,5, Karlijn A.C. Meeks1,6, Felix. P Chilunga1, Eva L. van der Linden1, Charles F. Hayfron-Benjamin1,7,8, Constance R. Sewani-Rusike2, Liffert Vogt9, Bert-Jan van den Born1,7,Samuel N. Darko10,Ellis Owusu-Dabo11, Benedicta N. Nkeh-Chungag2, Charles Agyemang1,12* and Peter Henneman3,4,5*
 
 AFFILIATIONS
 1.	Department of Public and Occupational Health, Amsterdam University Medical Centers, University of Amsterdam, Amsterdam Public Health Research Institute, Amsterdam, The Netherlands.
@@ -21,13 +21,12 @@ AFFILIATIONS
 9.	Department of Internal Medicine, Section Nephrology, Amsterdam Cardiovascular Sciences, Amsterdam UMC, University of Amsterdam, Amsterdam, The Netherlands.
 10.	Department of Molecular Medicine, Kwame Nkrumah University of Science and Technology, Ghana
 11.	Department of Global and International Health, Kwame Nkrumah University of Science and Technology, Ghana
-12.	Department of Biological and Environmental Sciences, Faculty of Natural Sciences, Walter Sisulu University, Mthatha, South Africa.
-13.	Division of Endocrinology, Diabetes and Metabolism, Department of Medicine, The Johns Hopkins University School of Medicine, Baltimore, MD, United States.
+12.	Division of Endocrinology, Diabetes and Metabolism, Department of Medicine, The Johns Hopkins University School of Medicine, Baltimore, MD, United States.
 
 * Shared authorship
   
 #Corresponding author
-Muhau M. Mungamba, Department of Public and Occupational Health, Amsterdam Public Health Research institute, Amsterdam University Medical Centers, University of Amsterdam, Amsterdam, The Netherlands. Email: m.m.mungamba@amsterdamumc.nl/mmungamba@wsu.ac.za. 
+Muhulo M. Mungamba, Department of Public and Occupational Health, Amsterdam Public Health Research institute, Amsterdam University Medical Centers, University of Amsterdam, Amsterdam, The Netherlands. Email: m.m.mungamba@amsterdamumc.nl/mmungamba@wsu.ac.za. 
 
 Abstract
 
